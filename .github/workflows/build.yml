@@ -1,0 +1,66 @@
+name: Release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os
+
+          if os.environ['GITHUB_REF_TYPE'] != 'tag':
+              raise SystemExit('Run this workflow on a release tag, not a branch.')
+          PY
+          gh release view "$GITHUB_REF_NAME"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Install Android build tools and NDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724'
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends autoconf automake libtool pkg-config libplist-utils xxd
+      - name: Cache native source downloads
+        uses: actions/cache@v4
+        with:
+          path: native/work/downloads
+          key: native-downloads-${{ hashFiles('native/build.sh') }}
+      - name: Build shairport-sync and NQPTP
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.3.13750724" native/build.sh
+      - name: Build the Now Playing companion app
+        env:
+          COMPANION_KEYSTORE_BASE64: ${{ secrets.COMPANION_KEYSTORE_BASE64 }}
+          COMPANION_KEYSTORE_PASSWORD: ${{ secrets.COMPANION_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$COMPANION_KEYSTORE_BASE64" ] || [ -z "$COMPANION_KEYSTORE_PASSWORD" ]; then
+            echo "Add the COMPANION_KEYSTORE_BASE64 and COMPANION_KEYSTORE_PASSWORD repository secrets." >&2
+            exit 1
+          fi
+          echo "$COMPANION_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/companion.jks"
+          COMPANION_KEYSTORE="$RUNNER_TEMP/companion.jks" companion/build.sh
+          rm -f "$RUNNER_TEMP/companion.jks"
+      - name: Test
+        run: python3 tools/test.py
+      - name: Build
+        run: python3 tools/build.py --android-platform 35 --version "${GITHUB_REF_NAME#v}"
+      - name: Attach plugin assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/*.zip \
+            dist/*.zip.sha256 \
+            dist/kiosk-satellite-plugin.json --clobber

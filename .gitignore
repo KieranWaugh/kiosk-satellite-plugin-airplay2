@@ -1,0 +1,12 @@
+# Build output
+dist/
+native/out/
+native/work/
+companion/build/
+assets/nowplaying.apk
+
+# Never commit signing keys
+*.jks
+*.keystore
+
+.DS_Store

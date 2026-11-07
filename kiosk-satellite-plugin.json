@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "apiVersion": 1,
+  "id": "airplay2-speaker",
+  "name": "AirPlay 2 Speaker",
+  "version": "0.3.0",
+  "minAndroidSdk": 26,
+  "minAppVersion": "2026.11.5",
+  "entryClass": "io.github.kieranwaugh.airplay2.AirPlay2Plugin",
+  "description": "Makes this kiosk an AirPlay 2 speaker that joins multi-room groups and plays in sync with HomePods and other AirPlay 2 speakers, using shairport-sync and NQPTP. Follows Kiosk Satellite's media volume, ducks while the assistant listens or speaks, and shows the track in Now Playing through a small companion app the plugin installs itself. AirPlay 2 timing needs UDP ports 319 and 320: where Android won't let the app open them, NQPTP runs with root (su, such as Magisk). Not affiliated with Apple.",
+  "author": "Kieran Waugh",
+  "license": "MIT",
+  "headless": true,
+  "capabilities": [
+    "native",
+    "host.read"
+  ],
+  "settings": [
+    {
+      "key": "speakerName",
+      "type": "string",
+      "title": "Speaker name",
+      "default": "Kiosk Satellite",
+      "group": "Speaker",
+      "description": "The name in the AirPlay menu of an iPhone, iPad or Mac."
+    },
+    {
+      "key": "latencyOffsetMs",
+      "type": "number",
+      "title": "Sync offset (ms)",
+      "default": 0,
+      "min": -500,
+      "max": 500,
+      "step": 5,
+      "group": "Speaker",
+      "description": "Moves playback against other speakers in a group. Negative plays earlier. Tune by ear with a HomePod in the same room."
+    },
+    {
+      "key": "followMediaVolume",
+      "type": "boolean",
+      "title": "Follow the media volume",
+      "default": true,
+      "group": "Volume",
+      "description": "Caps AirPlay at Kiosk Satellite's media volume, the same way as its own players. The sender's volume still works within it."
+    },
+    {
+      "key": "duckPercent",
+      "type": "number",
+      "title": "Duck to (%)",
+      "default": 5,
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "group": "Volume",
+      "description": "AirPlay's level while the assistant listens, thinks or answers. 100 turns ducking off."
+    },
+    {
+      "key": "statistics",
+      "type": "boolean",
+      "title": "Log sync statistics",
+      "default": false,
+      "group": "Diagnostics",
+      "description": "Writes shairport-sync's sync figures to the app log every few seconds."
+    }
+  ]
+}

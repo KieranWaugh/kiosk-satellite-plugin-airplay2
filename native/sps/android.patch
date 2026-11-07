@@ -1,0 +1,38 @@
+--- a/shairport.c	2026-11-07 16:09:48
++++ b/shairport.c	2026-11-07 16:09:48
+@@ -2751,6 +2751,16 @@
+   config.service_type = APST_auto; // this may be changed by the settings...
+ 
+   // get a device id -- the first non-local MAC address
++#ifdef __ANDROID__
++  // Android 11+ hides MAC addresses from apps, so the caller passes a stable ID
++  // as 12 hex digits in SPS_HW_ADDR instead of waiting 10 s for one that never comes.
++  const char *hw = getenv("SPS_HW_ADDR");
++  unsigned int hb[6];
++  if (hw != NULL && sscanf(hw, "%2x%2x%2x%2x%2x%2x", &hb[0], &hb[1], &hb[2], &hb[3], &hb[4], &hb[5]) == 6) {
++    for (int i = 0; i < 6; i++)
++      ((uint8_t *)&config.hw_addr)[i] = (uint8_t)hb[i];
++  } else
++#endif
+   get_device_id((uint8_t *)&config.hw_addr, 6);
+ 
+   // get the endianness
+--- a/plists/get_info_response.xml	2026-11-07 16:09:48
++++ b/plists/get_info_response.xml	2026-11-07 16:09:48
+@@ -46,13 +46,13 @@
+ 		<!-- 0x00000400000 is AAC-LC/44.1K/F24/2 -->
+ 		<!-- 0x00000200000 is ALAC/48K/F24/2 -->
+ 
+-	</dict>
++	<!-- </dict> --> <!-- Android build: the <dict> above is commented out, so this closing tag is too -->
+ 	<!-- <key>sourceVersion</key> --> <!-- added programmatically -->
+ 	<!-- <string>620.8.2</string> -->
+ 	<!-- <key>macAddress</key> --> <!-- hoping we don't need this -->
+ 	<!-- <string>b8:27:eb:82:d0:87</string> -->
+-	<key>receiverHDRCapability</key>
+-	<string>4k60</string>
++	<!-- <key>receiverHDRCapability</key> --> <!-- Android build: left out, as the tested Debian build -->
++	<!-- <string>4k60</string> --> <!-- of 5.6.2 did (its plistutil stopped at the stray tag above) -->
+ 	<!-- key values for initialVolume, vv, volumeControlType, sourceVersion, deviceID, features, pi, name, model, featuresEx and a txtAirPlay data field are added programatically -->
+ 	<!-- key values for firmwareBuildDate (string), build (string) and PTPInfo (string)
+ 	 should be added programatically -->
