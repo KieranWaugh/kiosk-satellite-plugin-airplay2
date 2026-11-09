@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 - 2026-11-09
+
+NQPTP no longer runs as root.
+
+- Where apps can't open UDP 319/320, a short root command adds `iptables` rules that redirect them to 10319/10320, and NQPTP (patched to listen there) runs as Kiosk Satellite. PTP it sends leaves from 319/320, so other speakers answer it as before. The rules are removed when AirPlay stops.
+- Root can now come from Shizuku running as root (new `shizuku` capability), which survives image updates, as well as from `su`. Shizuku is tried first. With Shizuku the rules are checked every 30 seconds and put back if missing.
+- NQPTP gets its real-time priority through root, as it had when it ran as root.
+- If the kernel has no `iptables` NAT, NQPTP runs as root through `su` as before.
+- An NQPTP an earlier version left running as root is stopped when the redirect is set up.
+
 ## 0.4.0 - 2026-11-09
 
 Now one of Kiosk Satellite's own players. Needs Kiosk Satellite 2026.11.14 or newer.

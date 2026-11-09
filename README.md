@@ -14,10 +14,10 @@ Not affiliated with Apple. AirPlay is a trademark of Apple Inc.
 | --- | --- |
 | Kiosk Satellite | 2026.11.14 or newer (plugin players) |
 | Android | 8.0 (API 26) or newer, on a device that runs 32-bit ARM code (`armeabi-v7a`). Most 64-bit ARM devices do; x86 devices and 64-bit-only devices don't. |
-| Timing ports | AirPlay 2 grouping needs UDP ports 319 and 320. Most Android kernels don't let apps open ports below 1024, so on most devices NQPTP needs **root** (`su`, for example Magisk). Allow Kiosk Satellite in your root manager. If the device lets apps open those ports, no root is needed and the plugin uses it automatically. |
+| Timing ports | AirPlay 2 grouping needs UDP ports 319 and 320. Most Android kernels don't let apps open ports below 1024, so on most devices the plugin needs **a moment of root** to redirect them to ports it can open (see [Root](#root)): either [Shizuku](https://shizuku.rikka.app/) running as root, or `su` such as Magisk. If the device lets apps open those ports, no root is needed and the plugin uses them directly. |
 | Other receivers | Only one AirPlay 2 receiver can use ports 319, 320 and 7000 on a device. Picking this player takes Kiosk Satellite's built-in AirPlay receiver offline; stop any other one yourself. |
 
-Version 0.3.0, which played through its own AAudio stream, was tested on an Echo Show 5 (2nd gen) running the [Kiosk Satellite Edition of LineageOS](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite), grouped with a HomePod: steady sync within about ±1.5 ms. 0.4.0 plays through Kiosk Satellite's output instead and hasn't been tested on a device yet.
+Version 0.3.0, which played through its own AAudio stream, was tested on an Echo Show 5 (2nd gen) running the [Kiosk Satellite Edition of LineageOS](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite), grouped with a HomePod: steady sync within about ±1.5 ms. 0.4.0 plays through Kiosk Satellite's output instead, and 0.5.0 runs NQPTP without root behind a port redirect. Neither has been tested in a group on a device yet; the redirect, the patched NQPTP running as an app and its real-time priority were checked on the same Echo Show.
 
 ## Installation
 
@@ -37,11 +37,22 @@ Or search for `AirPlay 2 Speaker` in **Settings > Plugin Manager > Browse plugin
 
 Then:
 
-1. If your device needs root for the timing ports, allow **Kiosk Satellite** in your root manager. Magisk 31 shows no prompt: add it in advance under **Superuser**.
+1. If your device needs root for the timing ports, set up one of the two ways in [Root](#root).
 2. Set **Speaker name** and enable the plugin.
 3. Under **Settings > Media Player > Player**, pick **AirPlay 2 Speaker: <speaker name>** under **This device**.
 
-The speaker shows up in the AirPlay menu only while it is the picked player. The status line shows `Running as "<name>"` and whether timing runs with or without root, or says to pick the player.
+The speaker shows up in the AirPlay menu only while it is the picked player. The status line shows `Running as "<name>"` and how the timing ports are reached (`no root needed`, `PTP ports redirected with Shizuku` or `with su`), or says to pick the player.
+
+## Root
+
+Where apps can't open UDP 319 and 320, the plugin uses root only for short commands: when AirPlay starts it adds `iptables` rules that move 319 and 320 to 10319 and 10320, and NQPTP runs as Kiosk Satellite on those. Root is used again to give NQPTP real-time priority, and to remove the rules when AirPlay stops. No root process keeps running.
+
+The plugin tries these in order:
+
+1. **Shizuku running as root.** Kiosk Satellite's Echo builds have **Rooted debugging** in Developer options: start [Shizuku](https://shizuku.rikka.app/) through `adb root` once, then tap **Shizuku access** under **Settings > Device > Shizuku** in Kiosk Satellite. Nothing here lives in the system or boot partitions, so it keeps working after image updates, as long as Shizuku is started again after each reboot. With Shizuku the plugin also checks the rules every 30 seconds and puts them back if something removed them.
+2. **`su`**, such as Magisk. Allow **Kiosk Satellite** under **Magisk > Superuser** (Magisk 31 shows no prompt: add it in advance). Image updates remove Magisk until it is flashed again.
+
+If the kernel has no `iptables` NAT for the redirect, and `su` works, NQPTP runs as root itself, as in 0.4.0 and earlier. The rules are lost on reboot, and the plugin adds them again whenever AirPlay starts.
 
 ## Settings
 
@@ -53,7 +64,7 @@ The speaker shows up in the AirPlay menu only while it is the picked player. The
 
 ## What it installs and where data goes
 
-- **Two helper programs**, shairport-sync and NQPTP, from this plugin's package. They run only while the plugin's player is the pick, and stop when another player is picked or the plugin is disabled. NQPTP runs as root only where the timing ports need it.
+- **Two helper programs**, shairport-sync and NQPTP, from this plugin's package. They run only while the plugin's player is the pick, and stop when another player is picked or the plugin is disabled. Where the timing ports need it, root runs a few short commands to redirect them (see [Root](#root)).
 - **Nothing else.** Up to 0.3.0 the plugin installed a Now Playing companion app (`io.github.kieranwaugh.airplay2.nowplaying`). It isn't needed any more, and you can uninstall it like any app.
 - **Network:** while it is the pick, the AirPlay speaker listens on your local network (TCP 7000, UDP 319/320 and the ports AirPlay negotiates) and is advertised with Android's own mDNS. Audio and track info pass between shairport-sync and the plugin over pipes and the device's loopback address only. Nothing is sent anywhere else.
 - **Files:** settings, a random device ID and the shairport-sync config, in Kiosk Satellite's private storage.
@@ -68,7 +79,7 @@ The speaker shows up in the AirPlay menu only while it is the picked player. The
 | Part | Runs as | Notes |
 | --- | --- | --- |
 | shairport-sync | Kiosk Satellite's user | A separate process started through `/system/bin/linker`, so a crash can't take Kiosk down. A custom backend (`native/sps/audio_plugin.c`) sends its PCM to the plugin over stdout, and the plugin writes it to the player's audio output. Every 100 ms the plugin sends back the output's timestamp (which frame was heard when, on the clock the echo canceller reads), from which the backend works out its delay for sync. |
-| NQPTP | Kiosk Satellite's user, or root | Started without root when ports 319/320 can be opened, otherwise through `su`. Shares its clock with shairport-sync through a file. |
+| NQPTP | Kiosk Satellite's user | Listens on 319/320 where it can. Otherwise a short root command redirects them to 10319/10320 with `iptables` (incoming PTP is redirected; PTP NQPTP sends leaves from 319/320, so a HomePod leading the group answers it as usual), and a small patch (`native/nqptp/ports.patch`) lets NQPTP listen there. Shares its clock with shairport-sync through a file. |
 | mDNS | Kiosk Satellite | shairport-sync's DNS-SD records are advertised with Android's NsdManager. |
 | Now Playing | Kiosk Satellite | The plugin decodes the sender's track info from shairport-sync's metadata and sends it as the player's state. Progress is worked out on the sender's clock, estimated from the messages' own timestamps, so a device clock that's off doesn't matter. |
 

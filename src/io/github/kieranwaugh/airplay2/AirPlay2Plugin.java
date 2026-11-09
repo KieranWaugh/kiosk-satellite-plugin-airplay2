@@ -13,7 +13,8 @@ import me.jxl.kiosk.plugins.PluginPlayer;
 
 /**
  * AirPlay 2 Speaker: a Kiosk Satellite player that runs shairport-sync (the AirPlay 2 receiver)
- * and NQPTP (its PTP timing companion) as helper processes while it is the pick under
+ * and NQPTP (its PTP timing companion, behind a root-made port redirect: Nqptp, PortRedirect,
+ * Root) as helper processes while it is the pick under
  * Media Player > Player. The audio goes to the player's output (AudioBridge), so the echo
  * canceller hears it and Kiosk applies its media volume and the assistant's duck. The track goes
  * to Now Playing through the player's state (NowPlaying). The speaker is advertised with
@@ -24,6 +25,7 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
 
     private PluginHost host;
     private File dir;
+    private Root root;
     private Nqptp nqptp;
     private Shairport shairport;
     private MdnsBridge mdns;
@@ -55,7 +57,8 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
 
         nowPlaying = new NowPlaying(this::showState);
         nowPlaying.start();
-        nqptp = new Nqptp(dir, host.nativeLibraryPath("nqptp"));
+        root = Root.forHost(host);
+        nqptp = new Nqptp(dir, host.nativeLibraryPath("nqptp"), root);
         shairport = new Shairport(dir, host.nativeLibraryPath("shairport"), deviceId(), this::openAudio);
         shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics, nowPlaying.port());
         mdns = new MdnsBridge(context);
@@ -81,7 +84,13 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     public void execute(String command, Map<String, Object> arguments) {}
 
     @Override
-    public void onEvent(String event, Map<String, Object> payload) {}
+    public void onEvent(String event, Map<String, Object> payload) {
+        // Shizuku connected, disconnected or was granted: if timing isn't up, look for root again.
+        if ("shizuku.state".equals(event) && root != null && (nqptp == null || !nqptp.isRunning())) {
+            root.forget();
+            wake();
+        }
+    }
 
     @Override
     public void stop() {
@@ -155,6 +164,7 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     private void supervise() {
         int quickExits = 0;
         long startedAt = 0;
+        long lastCheck = 0;
         while (running) {
             if (player == null) {
                 if (serving) {
@@ -172,6 +182,10 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
                     serving = true;
                 }
                 nqptp.start();
+                if (System.currentTimeMillis() - lastCheck > 30000) {
+                    lastCheck = System.currentTimeMillis();
+                    nqptp.maintain(); // puts the PTP port redirect back if something removed it
+                }
                 if (!shairport.isRunning()) {
                     if (startedAt != 0) {
                         long ran = System.currentTimeMillis() - startedAt;
@@ -186,8 +200,7 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
                     shairport.start();
                     startedAt = System.currentTimeMillis();
                 }
-                String how = nqptp.mode() == Nqptp.Mode.APP ? "no root needed" : "timing (NQPTP) runs as root";
-                status("Running as \"" + speakerName + "\" (" + how + ")", false);
+                status("Running as \"" + speakerName + "\" (" + nqptp.describe() + ")", false);
             } catch (Exception e) {
                 status(e.getMessage() != null ? e.getMessage() : e.toString(), true);
                 sleep(10000);
@@ -200,7 +213,7 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     /** Stops shairport-sync, NQPTP and the mDNS records, in parallel where it helps. */
     private synchronized void stopServing() {
         Thread a = new Thread(() -> { if (shairport != null) shairport.stop(); });
-        Thread b = new Thread(() -> { if (nqptp != null) nqptp.stop(); }); // root NQPTP needs one more su call
+        Thread b = new Thread(() -> { if (nqptp != null) nqptp.stop(); }); // removing the redirect needs root once more
         a.start();
         b.start();
         try {

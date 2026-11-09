@@ -176,6 +176,7 @@ APP_LDFLAGS="-L$PREFIX/lib -pie -Wl,--gc-sections -Wl,--as-needed"
 
 b_nqptp() {
   rm -rf "$BUILD/nqptp" && cp -R "$SRC/nqptp-1.2.9" "$BUILD/nqptp" && cd "$BUILD/nqptp"
+  patch -p1 -s < "$HERE/nqptp/ports.patch" # NQPTP_PORT_OFFSET: listen where iptables redirects 319/320
   autoreconf -fi >/dev/null 2>&1
   # AC_FUNC_MALLOC can't run its test when cross-compiling; older autoconf (Ubuntu's) then
   # assumes malloc(0) returns NULL and links against an rpl_malloc nqptp doesn't provide.

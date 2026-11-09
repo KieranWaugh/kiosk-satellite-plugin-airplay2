@@ -1,0 +1,58 @@
+--- a/nqptp.c	2026-11-09 14:16:20
++++ b/nqptp.c	2026-11-09 14:16:20
+@@ -142,6 +142,10 @@
+   exit(EXIT_SUCCESS);
+ }
+ 
++// Android: apps can't open ports below 1024, so the plugin redirects UDP 319 and 320 to
++// 319 + NQPTP_PORT_OFFSET and 320 + NQPTP_PORT_OFFSET with iptables, and NQPTP listens there.
++static unsigned int ptp_port_offset = 0;
++
+ int main(int argc, char **argv) {
+ #ifdef CONFIG_FOR_OPENBSD
+   if (pledge("stdio rpath tmppath inet dns id", NULL) == -1) {
+@@ -186,6 +190,15 @@
+ 
+   debug_init(debug_level, 0, 1, 1);
+ 
++  const char *offset_env = getenv("NQPTP_PORT_OFFSET");
++  if (offset_env != NULL) {
++    long v = strtol(offset_env, NULL, 10);
++    if (v > 0 && v <= 65535 - 320)
++      ptp_port_offset = (unsigned int)v;
++  }
++  if (ptp_port_offset != 0)
++    debug(1, "PTP ports moved to %u and %u.", 319 + ptp_port_offset, 320 + ptp_port_offset);
++
+ #ifdef CONFIG_USE_GIT_VERSION_STRING
+   if (git_version_string[0] != '\0')
+     debug(1, "Version: %s, smi%u. Clock ID: \"%" PRIx64 "\".", git_version_string,
+@@ -213,8 +226,8 @@
+   sockets_open_stuff.sockets_open = 0;
+ 
+   // open PTP sockets
+-  open_sockets_at_port(NULL, 319, &sockets_open_stuff);
+-  open_sockets_at_port(NULL, 320, &sockets_open_stuff);
++  open_sockets_at_port(NULL, 319 + ptp_port_offset, &sockets_open_stuff);
++  open_sockets_at_port(NULL, 320 + ptp_port_offset, &sockets_open_stuff);
+ 
+   epoll_fd = -1;
+ 
+@@ -390,7 +403,7 @@
+                 sender_port = ntohs(sa4->sin_port);
+               }
+ 
+-              if (sender_port == receiver_port) {
++              if (sender_port + ptp_port_offset == receiver_port) {
+ 
+                 char sender_string[256];
+                 memset(sender_string, 0, sizeof(sender_string));
+@@ -491,7 +504,7 @@
+   int s = 0;
+   unsigned t;
+   for (t = 0; t < sockets_open_stuff.sockets_open; t++) {
+-    if ((sockets_open_stuff.sockets[t].port == 320) &&
++    if ((sockets_open_stuff.sockets[t].port == 320 + ptp_port_offset) &&
+         (sockets_open_stuff.sockets[t].family == ip_family))
+       s = sockets_open_stuff.sockets[t].number;
+   }
