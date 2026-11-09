@@ -177,7 +177,11 @@ APP_LDFLAGS="-L$PREFIX/lib -pie -Wl,--gc-sections -Wl,--as-needed"
 b_nqptp() {
   rm -rf "$BUILD/nqptp" && cp -R "$SRC/nqptp-1.2.9" "$BUILD/nqptp" && cd "$BUILD/nqptp"
   autoreconf -fi >/dev/null 2>&1
-  CFLAGS="$APP_CFLAGS -I$PREFIX/include" LDFLAGS="$APP_LDFLAGS" LIBS="-landroidcompat" \
+  # AC_FUNC_MALLOC can't run its test when cross-compiling; older autoconf (Ubuntu's) then
+  # assumes malloc(0) returns NULL and links against an rpl_malloc nqptp doesn't provide.
+  # Bionic's malloc(0) returns a valid pointer.
+  ac_cv_func_malloc_0_nonnull=yes \
+    CFLAGS="$APP_CFLAGS -I$PREFIX/include" LDFLAGS="$APP_LDFLAGS" LIBS="-landroidcompat" \
     ./configure --host=arm-linux-androideabi >/dev/null
   make -j"$JOBS" CC="$CC_COMPAT" >/dev/null
   mkdir -p "$OUT" && "$STRIP" -o "$OUT/libnqptp.so" nqptp
