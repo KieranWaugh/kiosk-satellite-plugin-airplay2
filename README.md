@@ -25,14 +25,14 @@ Version 0.3.0, which played through its own AAudio stream, was tested on an Echo
 
 AirPlay 2 Speaker is listed in [Community Plugins](https://kiosksatellite.com/plugins/). Use the button below to open it in your Kiosk Satellite and install it.
 
-[![Install in Kiosk Satellite](https://kiosksatellite.com/img/badges/plugin-add.svg)](https://kiosksatellite.com/redirect/plugin/?repository=KieranWaugh/kiosk-satellite-airplay2)
+[![Install in Kiosk Satellite](https://kiosksatellite.com/img/badges/plugin-add.svg)](https://kiosksatellite.com/redirect/plugin/?repository=KieranWaugh/kiosk-satellite-plugin-airplay2)
 
 Or search for `AirPlay 2 Speaker` in **Settings > Plugin Manager > Browse plugins** in Kiosk Satellite.
 
 ### Manual
 
 1. Open **Settings > Plugin Manager** in Kiosk Satellite and turn on **Enable Plugins**.
-2. Choose **Add plugin**, paste `https://github.com/KieranWaugh/kiosk-satellite-airplay2` and choose **Preview**.
+2. Choose **Add plugin**, paste `https://github.com/KieranWaugh/kiosk-satellite-plugin-airplay2` and choose **Preview**.
 3. Review the plugin and choose **Trust and install**.
 
 Then:
