@@ -17,7 +17,7 @@ Not affiliated with Apple. AirPlay is a trademark of Apple Inc.
 | Timing ports | AirPlay 2 grouping needs UDP ports 319 and 320. Most Android kernels don't let apps open ports below 1024, so on most devices the plugin needs **a moment of root** to redirect them to ports it can open (see [Root](#root)): either [Shizuku](https://shizuku.rikka.app/) running as root, or `su` such as Magisk. If the device lets apps open those ports, no root is needed and the plugin uses them directly. |
 | Other receivers | Only one AirPlay 2 receiver can use ports 319, 320 and 7000 on a device. Picking this player takes Kiosk Satellite's built-in AirPlay receiver offline; stop any other one yourself. |
 
-Version 0.3.0, which played through its own AAudio stream, was tested on an Echo Show 5 (2nd gen) running the [Kiosk Satellite Edition of LineageOS](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite), grouped with a HomePod: steady sync within about ±1.5 ms. 0.4.0 plays through Kiosk Satellite's output instead, and 0.5.0 runs NQPTP without root behind a port redirect. Neither has been tested in a group on a device yet; the redirect, the patched NQPTP running as an app and its real-time priority were checked on the same Echo Show.
+Version 0.3.0, which played through its own AAudio stream, was tested on an Echo Show 5 (2nd gen) running the [Kiosk Satellite Edition of LineageOS](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite), grouped with a HomePod: steady sync within about ±1.5 ms. 0.4.0 plays through Kiosk Satellite's output instead, and 0.5.0 runs NQPTP without root behind a port redirect. 0.4.0's output path hasn't been tested on a device yet. The 0.5.0 timing setup was tested on the same Echo Show in a 0.3.0-based test build: grouped with a HomePod, sync held within about 1 ms with NQPTP running without root; playing to it alone needed the IPv4-only listener.
 
 ## Installation
 
@@ -51,6 +51,8 @@ The plugin tries these in order:
 
 1. **Shizuku running as root.** Kiosk Satellite's Echo builds have **Rooted debugging** in Developer options: start [Shizuku](https://shizuku.rikka.app/) through `adb root` once, then tap **Shizuku access** under **Settings > Device > Shizuku** in Kiosk Satellite. Nothing here lives in the system or boot partitions, so it keeps working after image updates, as long as Shizuku is started again after each reboot. With Shizuku the plugin also checks the rules every 30 seconds and puts them back if something removed them.
 2. **`su`**, such as Magisk. Allow **Kiosk Satellite** under **Magisk > Superuser** (Magisk 31 shows no prompt: add it in advance). Image updates remove Magisk until it is flashed again.
+
+Where only IPv4 can be redirected (many kernels have no `ip6tables` NAT, including the Echo Show 5's), shairport-sync accepts AirPlay connections over IPv4 only, so senders time the session over IPv4 too. A sender playing to the speaker alone would otherwise connect and send its timing over IPv6, and play nothing.
 
 If the kernel has no `iptables` NAT for the redirect, and `su` works, NQPTP runs as root itself, as in 0.4.0 and earlier. The rules are lost on reboot, and the plugin adds them again whenever AirPlay starts.
 

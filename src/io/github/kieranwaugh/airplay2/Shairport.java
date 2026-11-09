@@ -78,10 +78,18 @@ final class Shairport {
                 + "};\n";
     }
 
+    private volatile boolean ipv4Only;
+
+    /** Listen on IPv4 only from the next start (see Nqptp.ipv4Only). */
+    void setIpv4Only(boolean v) { ipv4Only = v; }
+
+    boolean ipv4Only() { return ipv4Only; }
+
     synchronized void start() throws IOException {
         if (isRunning()) return;
         ProcessBuilder pb = new ProcessBuilder("/system/bin/linker", library.getPath(), "-c", config.getPath());
         pb.environment().put("NQPTP_SHM_DIR", dir.getPath());
+        if (ipv4Only) pb.environment().put("SPS_IPV4_ONLY", "1");
         pb.environment().put("SPS_MDNS_PORT", Integer.toString(MDNS_PORT));
         pb.environment().put("SPS_HW_ADDR", hwAddr);
         pb.environment().put("HOME", dir.getPath());

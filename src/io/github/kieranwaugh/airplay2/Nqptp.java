@@ -35,6 +35,7 @@ final class Nqptp {
     private Process process;
     private Mode mode;
     private Root.Shell redirectedBy;
+    private boolean ipv6Redirected;
     private final java.util.ArrayDeque<String> output = new java.util.ArrayDeque<>();
 
     Nqptp(File dir, String libraryPath, Root root) {
@@ -79,7 +80,8 @@ final class Nqptp {
         // A root NQPTP an earlier version left running would sit on 319/320 for nothing: stop it.
         Root.Result r = root.run(STOP_ROOT_NQPTP + PortRedirect.addScript(), 20000);
         if (r.ok()) {
-            if (!r.output.contains(PortRedirect.IP6TABLES + " ok")) Log.d("no IPv6 PTP redirect: " + r.output);
+            ipv6Redirected = r.output.contains(PortRedirect.IP6TABLES + " ok");
+            if (!ipv6Redirected) Log.d("no IPv6 PTP redirect, so AirPlay listens on IPv4 only: " + r.output);
             launch(PortRedirect.OFFSET);
             mode = Mode.REDIRECT;
             redirectedBy = shell;
@@ -93,6 +95,15 @@ final class Nqptp {
             return;
         }
         throw new IOException("Couldn't redirect UDP 319/320 with iptables through " + shell.name() + ": " + r.output);
+    }
+
+    /**
+     * True when PTP reaches NQPTP over IPv4 only (the redirect worked for IPv4, not IPv6). A sender
+     * that connects over IPv6 times the session over IPv6 too, and NQPTP would never hear it, so
+     * shairport-sync must then listen on IPv4 only.
+     */
+    synchronized boolean ipv4Only() {
+        return mode == Mode.REDIRECT && !ipv6Redirected;
     }
 
     synchronized boolean isRunning() {
@@ -136,6 +147,7 @@ final class Nqptp {
         pidFile.delete();
         mode = null;
         redirectedBy = null;
+        ipv6Redirected = false;
     }
 
     // ---- starting ----------------------------------------------------------------------------

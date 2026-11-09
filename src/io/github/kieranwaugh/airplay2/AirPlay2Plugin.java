@@ -186,6 +186,11 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
                     lastCheck = System.currentTimeMillis();
                     nqptp.maintain(); // puts the PTP port redirect back if something removed it
                 }
+                if (shairport.isRunning() && shairport.ipv4Only() != nqptp.ipv4Only()) {
+                    Log.i("timing changed between IPv4 only and both; restarting shairport-sync");
+                    shairport.stop();
+                }
+                shairport.setIpv4Only(nqptp.ipv4Only());
                 if (!shairport.isRunning()) {
                     if (startedAt != 0) {
                         long ran = System.currentTimeMillis() - startedAt;

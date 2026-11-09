@@ -1,0 +1,15 @@
+--- a/rtsp.c	2026-11-09 14:50:26
++++ b/rtsp.c	2026-11-09 14:50:26
+@@ -4398,6 +4398,12 @@
+   hints.ai_family = AF_UNSPEC;
+   hints.ai_socktype = SOCK_STREAM;
+   hints.ai_flags = AI_PASSIVE;
++  // Android: where PTP can only be redirected for IPv4 (no ip6tables NAT), listen on IPv4 only,
++  // so senders connect, and time the session, over IPv4.
++  if (getenv("SPS_IPV4_ONLY") != NULL) {
++    hints.ai_family = AF_INET;
++    debug(1, "rtsp_listen_loop: listening on IPv4 only.");
++  }
+ 
+   snprintf(portstr, 6, "%d", config.port);
+ 

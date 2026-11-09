@@ -192,6 +192,7 @@ b_shairport() {
   rm -rf "$BUILD/sps" && cp -R "$SRC/shairport-sync-5.6.2" "$BUILD/sps" && cd "$BUILD/sps"
   cp "$HERE/sps/audio_plugin.c" audio_stdout.c # the plugin backend takes the stdout backend's slot
   patch -p1 -s < "$HERE/sps/android.patch"
+  patch -p1 -s < "$HERE/sps/ipv4-only.patch" # SPS_IPV4_ONLY: where only IPv4 PTP can be redirected
   autoreconf -fi >/dev/null 2>&1
   PKG_CONFIG="pkg-config --static" \
     CFLAGS="$APP_CFLAGS -I$PREFIX/include" CXXFLAGS="$APP_CFLAGS -I$PREFIX/include" \
