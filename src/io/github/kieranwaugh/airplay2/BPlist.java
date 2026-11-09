@@ -1,4 +1,4 @@
-package io.github.kieranwaugh.airplay2.nowplaying;
+package io.github.kieranwaugh.airplay2;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -10,7 +10,7 @@ import java.util.Map;
  * Minimal Apple binary property list ("bplist00") parser.
  * Returns Map, List, String, Long, Double, Boolean, byte[], or Date (as Double seconds since 1970).
  */
-public final class BPlist {
+final class BPlist {
     private final byte[] b;
     private final int offsetSize, refSize;
     private final long[] offsets;

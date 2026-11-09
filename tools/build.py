@@ -70,8 +70,6 @@ with tempfile.TemporaryDirectory(prefix='kiosk-plugin-') as temp:
         native_files.append((f'native/{library.parent.name}/{library.name}', library))
     if 'native' in manifest.get('capabilities', []) and not native_files:
         raise SystemExit('No native programs in native/out: run native/build.sh first')
-    if not (plugin / 'assets' / 'nowplaying.apk').is_file():
-        raise SystemExit('No companion app at assets/nowplaying.apk: run companion/build.sh first')
     package = out / f"{manifest['id']}-{manifest['version']}.zip"
     expanded = len(manifest_bytes) + jar.stat().st_size + (plugin / 'LICENSE').stat().st_size + sum(file.stat().st_size for _, file in assets) + sum(file.stat().st_size for _, file in native_files)
     print(f'Expanded size: {expanded} of {MAX_PACKAGE_BYTES} bytes')

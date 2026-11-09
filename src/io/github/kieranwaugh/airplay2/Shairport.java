@@ -16,39 +16,35 @@ import java.util.concurrent.TimeUnit;
  * Kiosk Satellite down. It is a PIE executable packaged as libshairport.so and started through
  * /system/bin/linker (Android 10+ won't execute files from app storage directly).
  *
- * The plugin talks to it three ways: the config file it writes, "gain x" lines on its stdin (the
- * AAudio backend's extra volume, for Kiosk's media volume and ducking), and two local UDP ports
- * it sends to (mDNS records for MdnsBridge, track metadata for the companion app).
+ * The plugin talks to it through the config file it writes, its stdout (the audio, read by
+ * AudioBridge), its stdin (the output's timestamps, from AudioBridge), its stderr (the log) and two
+ * local UDP ports it sends to (mDNS records for MdnsBridge, track metadata for NowPlaying).
  */
 final class Shairport {
     static final int MDNS_PORT = 5566;
-    /**
-     * Track metadata goes to the AirPlay Now Playing companion app (see Companion),
-     * which listens here. Kiosk Satellite's Local Media Session only follows *other* apps, so a
-     * media session published from inside the plugin (Kiosk's own process) is never shown.
-     */
-    static final int METADATA_PORT = 5555;
 
     private final File dir, library, config;
     private final String hwAddr;
+    private final AudioBridge.Opener opener;
     private Process process;
     private OutputStream stdin;
-    private float gain = 1f;
+    private AudioBridge bridge;
     private final ArrayDeque<String> recent = new ArrayDeque<>();
     private volatile boolean logStatistics;
 
-    Shairport(File dir, String libraryPath, String hwAddr) {
+    Shairport(File dir, String libraryPath, String hwAddr, AudioBridge.Opener opener) {
         this.dir = dir;
         this.library = new File(libraryPath);
         this.config = new File(dir, "shairport-sync.conf");
         this.hwAddr = hwAddr;
+        this.opener = opener;
     }
 
     /** Writes the config. Returns true if it changed (shairport-sync then needs a restart). */
-    synchronized boolean writeConfig(String name, double offsetSeconds, boolean statistics) throws IOException {
+    synchronized boolean writeConfig(String name, double offsetSeconds, boolean statistics, int metadataPort) throws IOException {
         logStatistics = statistics;
         new File(dir, "coverart").mkdirs();
-        String text = configText(name, offsetSeconds, statistics, dir.getPath());
+        String text = configText(name, offsetSeconds, statistics, dir.getPath(), metadataPort);
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         if (config.exists() && java.util.Arrays.equals(Files.readAllBytes(config.toPath()), bytes)) return false;
         Files.write(config.toPath(), bytes);
@@ -56,11 +52,11 @@ final class Shairport {
     }
 
     /** The shairport-sync config file's text (libconfig syntax). */
-    static String configText(String name, double offsetSeconds, boolean statistics, String dirPath) {
+    static String configText(String name, double offsetSeconds, boolean statistics, String dirPath, int metadataPort) {
         File dir = new File(dirPath);
         return "general = {\n"
                 + "  name = \"" + escape(name) + "\";\n"
-                + "  output_backend = \"aaudio\";\n"
+                + "  output_backend = \"plugin\";\n"
                 + "  mdns_backend = \"dns-sd\";\n"
                 // No "port" line: 7000 is the default, and shairport-sync 5.6.2 treats a config that
                 // sets one as a multi-instance setup and derives the AirPlay ID from the name, so a
@@ -73,7 +69,7 @@ final class Shairport {
                 + "  cover_art_cache_directory = \"" + escape(new File(dir, "coverart").getPath()) + "\";\n"
                 + "  pipe_name = \"" + escape(new File(dir, "metadata-pipe").getPath()) + "\";\n"
                 + "  socket_address = \"127.0.0.1\";\n"
-                + "  socket_port = " + METADATA_PORT + ";\n"
+                + "  socket_port = " + metadataPort + ";\n"
                 + "  socket_msglength = 65000;\n"
                 + "};\n"
                 + "diagnostics = {\n"
@@ -90,11 +86,11 @@ final class Shairport {
         pb.environment().put("SPS_HW_ADDR", hwAddr);
         pb.environment().put("HOME", dir.getPath());
         pb.directory(dir);
-        pb.redirectErrorStream(true);
         process = pb.start();
         stdin = process.getOutputStream();
-        sendGain();
         Process p = process;
+        bridge = new AudioBridge(p.getInputStream(), opener, this::send);
+        bridge.start();
         Thread t = new Thread(() -> readLog(p), "airplay2-shairport-log");
         t.setDaemon(true);
         t.start();
@@ -113,24 +109,20 @@ final class Shairport {
         } catch (InterruptedException e) {
             process.destroyForcibly();
         }
+        if (bridge != null) bridge.stop();
+        bridge = null;
         process = null;
         stdin = null;
     }
 
-    /** Linear amplitude 0..1 applied on top of the sender's volume. */
-    synchronized void setGain(float g) {
-        if (Math.abs(g - gain) < 0.0005f) return;
-        gain = g;
-        sendGain();
-    }
-
-    private void sendGain() {
+    /** A line for the helper's stdin (AudioBridge's timestamps). */
+    private synchronized void send(String line) {
         if (stdin == null) return;
         try {
-            stdin.write(String.format(Locale.ROOT, "gain %.4f\n", gain).getBytes(StandardCharsets.US_ASCII));
+            stdin.write((line + "\n").getBytes(StandardCharsets.US_ASCII));
             stdin.flush();
         } catch (IOException e) {
-            Log.d("can't send gain: " + e);
+            Log.d("can't write to shairport-sync: " + e);
         }
     }
 
@@ -140,7 +132,7 @@ final class Shairport {
     }
 
     private void readLog(Process p) {
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getErrorStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = r.readLine()) != null) {
                 String t = line.trim();
@@ -151,7 +143,7 @@ final class Shairport {
                 }
                 boolean stats = t.contains("player.c:4260");
                 if (stats ? logStatistics : (t.contains("fatal") || t.contains("error") || t.contains("Playback")
-                        || t.contains("AirPlay 2") || t.contains("aaudio: stream error"))) {
+                        || t.contains("AirPlay 2") || t.contains("plugin: can't"))) {
                     Log.i("shairport-sync: " + t.replaceFirst("^[0-9.]+\\s+\"[^\"]*\"\\s*", ""));
                 } else {
                     Log.d("shairport-sync: " + t);

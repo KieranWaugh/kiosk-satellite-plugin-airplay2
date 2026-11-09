@@ -6,7 +6,6 @@ import java.util.Map;
 /** Checks the plugin's device-independent logic. Run with java -ea. */
 public class PluginLogicTest {
     public static void main(String[] args) {
-        gain();
         txt();
         config();
         System.out.println("PluginLogicTest passed");
@@ -14,16 +13,6 @@ public class PluginLogicTest {
 
     private static void near(double a, double b, String what) {
         if (Math.abs(a - b) > 1e-9) throw new AssertionError(what + ": " + a + " != " + b);
-    }
-
-    private static void gain() {
-        near(AirPlay2Plugin.gain(false, 70, false, 5), 1.0, "not following the media volume");
-        near(AirPlay2Plugin.gain(true, 100, false, 5), 1.0, "full media volume");
-        near(AirPlay2Plugin.gain(true, 70, false, 5), 0.343, "70% media volume is cubic");
-        near(AirPlay2Plugin.gain(true, 70, true, 5), 0.343 * 0.05, "ducked to 5%");
-        near(AirPlay2Plugin.gain(true, 150, false, 5), 1.0, "media volume is clamped");
-        near(AirPlay2Plugin.gain(true, 50, true, 100), 0.125, "duck 100% means no ducking");
-        near(AirPlay2Plugin.gain(false, 50, true, -10), 0.0, "duck level is clamped");
     }
 
     private static byte[] txt(String... items) {
@@ -54,12 +43,12 @@ public class PluginLogicTest {
     }
 
     private static void config() {
-        String c = Shairport.configText("Kitchen \"Display\"", -0.15, false, "/data/x");
+        String c = Shairport.configText("Kitchen \"Display\"", -0.15, false, "/data/x", 40123);
         assert c.contains("name = \"Kitchen \\\"Display\\\"\";") : c;
         assert c.contains("audio_backend_latency_offset_in_seconds = -0.150;") : c;
-        assert c.contains("output_backend = \"aaudio\";") : c;
+        assert c.contains("output_backend = \"plugin\";") : c;
         assert c.contains("mdns_backend = \"dns-sd\";") : c;
-        assert c.contains("socket_port = " + Shairport.METADATA_PORT + ";") : c;
+        assert c.contains("socket_port = 40123;") : c;
         assert c.contains("statistics = \"no\";") : c;
         assert c.contains("cover_art_cache_directory = \"/data/x/coverart\";") : c;
         assert !c.matches("(?s).*\\n\\s*port = .*") : "a port line makes shairport-sync derive the AirPlay ID from the name";

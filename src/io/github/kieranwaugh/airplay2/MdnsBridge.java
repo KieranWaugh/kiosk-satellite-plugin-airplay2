@@ -49,7 +49,8 @@ final class MdnsBridge {
             socket.close();
             throw new SocketException("can't listen on 127.0.0.1:" + Shairport.MDNS_PORT + ": " + e);
         }
-        thread = new Thread(this::loop, "airplay2-mdns");
+        DatagramSocket own = socket;
+        thread = new Thread(() -> loop(own), "airplay2-mdns");
         thread.setDaemon(true);
         thread.start();
     }
@@ -63,15 +64,16 @@ final class MdnsBridge {
         }
     }
 
-    private void loop() {
+    /** Receives on its own socket, so a thread from before a stop and start ends with its socket. */
+    private void loop(DatagramSocket socket) {
         byte[] buf = new byte[8192];
-        while (running) {
+        while (running && !socket.isClosed()) {
             try {
                 DatagramPacket p = new DatagramPacket(buf, buf.length);
                 socket.receive(p);
                 handle(new String(p.getData(), 0, p.getLength(), StandardCharsets.US_ASCII));
             } catch (Exception e) {
-                if (running) Log.w("mDNS bridge", e);
+                if (running && !socket.isClosed()) Log.w("mDNS bridge", e);
             }
         }
     }

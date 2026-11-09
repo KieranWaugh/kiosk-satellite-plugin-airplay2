@@ -18,7 +18,7 @@ SRC="$WORK/src"
 BUILD="$WORK/build"
 PREFIX="$WORK/prefix"
 OUT="$HERE/out/armeabi-v7a"
-API=26 # AAudio needs 26
+API=26 # the plugin's minAndroidSdk
 NDK_VERSION=27.3.13750724
 
 # name|url|sha256
@@ -185,12 +185,12 @@ b_nqptp() {
 
 b_shairport() {
   rm -rf "$BUILD/sps" && cp -R "$SRC/shairport-sync-5.6.2" "$BUILD/sps" && cd "$BUILD/sps"
-  cp "$HERE/sps/audio_aaudio.c" audio_stdout.c # the AAudio backend takes the stdout backend's slot
+  cp "$HERE/sps/audio_plugin.c" audio_stdout.c # the plugin backend takes the stdout backend's slot
   patch -p1 -s < "$HERE/sps/android.patch"
   autoreconf -fi >/dev/null 2>&1
   PKG_CONFIG="pkg-config --static" \
     CFLAGS="$APP_CFLAGS -I$PREFIX/include" CXXFLAGS="$APP_CFLAGS -I$PREFIX/include" \
-    LDFLAGS="$APP_LDFLAGS -static-libstdc++" LIBS="-landroidcompat -laaudio -llog -lm" \
+    LDFLAGS="$APP_LDFLAGS -static-libstdc++" LIBS="-landroidcompat -llog -lm" \
     ./configure --host=arm-linux-androideabi --sysconfdir=/etc \
     --with-airplay-2 --with-ssl=openssl --with-dns_sd --with-stdout \
     --with-metadata --with-metadata-multicast >/dev/null

@@ -5,37 +5,42 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.SecureRandom;
-import java.util.HashMap;
 import java.util.Map;
 import me.jxl.kiosk.plugins.KioskPlugin;
+import me.jxl.kiosk.plugins.PlayerListener;
 import me.jxl.kiosk.plugins.PluginHost;
+import me.jxl.kiosk.plugins.PluginPlayer;
 
 /**
- * AirPlay 2 Speaker: runs shairport-sync (AirPlay 2 receiver) and NQPTP (its PTP timing companion)
- * as helper processes, advertises the speaker with Android's mDNS, sends the track to the AirPlay
- * Now Playing companion app (bundled, installed by the plugin) for Kiosk Satellite's Now Playing, and applies Kiosk's media volume and
- * assistant ducking.
+ * AirPlay 2 Speaker: a Kiosk Satellite player that runs shairport-sync (the AirPlay 2 receiver)
+ * and NQPTP (its PTP timing companion) as helper processes while it is the pick under
+ * Media Player > Player. The audio goes to the player's output (AudioBridge), so the echo
+ * canceller hears it and Kiosk applies its media volume and the assistant's duck. The track goes
+ * to Now Playing through the player's state (NowPlaying). The speaker is advertised with
+ * Android's mDNS (MdnsBridge) only while it is the pick, so it only shows up where it can play.
  */
-public class AirPlay2Plugin implements KioskPlugin {
+public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
+    static final String PLAYER_KEY = "airplay";
+
     private PluginHost host;
     private File dir;
     private Nqptp nqptp;
     private Shairport shairport;
     private MdnsBridge mdns;
-    private Companion companion;
-    private volatile boolean companionReady;
+    private NowPlaying nowPlaying;
     private Thread supervisor;
     private volatile boolean running;
+
+    /** The player while it is the pick, else null. */
+    private volatile PluginPlayer player;
+    /** Whether the helpers are up (supervisor thread only). */
+    private boolean serving;
 
     // settings
     private volatile String speakerName = "Kiosk Satellite";
     private volatile double offsetMs;
-    private volatile boolean followMediaVolume = true, statistics;
-    private volatile double duckPercent = 5;
-
-    // volume state
-    private volatile double mediaPercent = 100;
-    private volatile boolean assistantActive;
+    private volatile boolean statistics;
+    private String publishedName;
 
     private String lastStatus;
 
@@ -48,46 +53,26 @@ public class AirPlay2Plugin implements KioskPlugin {
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IllegalStateException("can't create " + dir);
         readSettings(settings);
 
+        nowPlaying = new NowPlaying(this::showState);
+        nowPlaying.start();
         nqptp = new Nqptp(dir, host.nativeLibraryPath("nqptp"));
-        shairport = new Shairport(dir, host.nativeLibraryPath("shairport"), deviceId());
-        shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics);
+        shairport = new Shairport(dir, host.nativeLibraryPath("shairport"), deviceId(), this::openAudio);
+        shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics, nowPlaying.port());
         mdns = new MdnsBridge(context);
-        mdns.start();
-        // Now Playing: shairport-sync sends track metadata to the companion app (see
-        // Shairport.METADATA_PORT), which the plugin carries and installs.
-        companion = new Companion(context, host.assetPath("nowplaying.apk"));
-        Thread c = new Thread(() -> {
-            try {
-                Log.i(companion.ensure());
-                companionReady = true;
-            } catch (Exception e) {
-                Log.w("Now Playing companion app", e);
-            }
-        }, "airplay2-companion");
-        c.setDaemon(true);
-        c.start();
-
-        host.subscribe("device.volume");
-        try {
-            host.subscribe("voice.state");
-        } catch (IllegalArgumentException e) {
-            Log.i("this Kiosk Satellite has no voice.state event, so AirPlay won't duck for the assistant");
-        }
-        readMediaVolume();
 
         running = true;
         supervisor = new Thread(this::supervise, "airplay2-supervisor");
         supervisor.start();
-        status("Starting", false);
+        publishPlayer();
     }
 
     @Override
     public void configure(Map<String, Object> settings) throws Exception {
         readSettings(settings);
-        applyGain();
-        if (shairport != null && shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics)) {
+        publishPlayer();
+        if (shairport != null && shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics, nowPlaying.port())) {
             Log.i("settings changed; restarting shairport-sync");
-            shairport.stop(); // the supervisor starts it again with the new config
+            shairport.stop(); // the supervisor starts it again with the new config if the player is the pick
             wake();
         }
     }
@@ -96,44 +81,96 @@ public class AirPlay2Plugin implements KioskPlugin {
     public void execute(String command, Map<String, Object> arguments) {}
 
     @Override
-    public void onEvent(String event, Map<String, Object> payload) {
-        if ("ks.device.volume".equals(event)) {
-            readMediaVolume();
-        } else if ("ks.voice.state".equals(event)) {
-            Object s = payload != null ? payload.get("state") : null;
-            assistantActive = s != null && !"idle".equals(s);
-            applyGain();
-        }
-    }
+    public void onEvent(String event, Map<String, Object> payload) {}
 
     @Override
     public void stop() {
         running = false;
-        if (supervisor != null) supervisor.interrupt();
-        // Stop both helpers in parallel; root NQPTP needs one more su call.
-        Thread a = new Thread(() -> { if (shairport != null) shairport.stop(); });
-        Thread b = new Thread(() -> { if (nqptp != null) nqptp.stop(); });
-        a.start();
-        b.start();
-        if (mdns != null) mdns.stop();
-        try {
-            a.join(1500);
-            b.join(1800);
-        } catch (InterruptedException ignored) {
+        player = null;
+        wake();
+        if (supervisor != null) {
+            supervisor.interrupt();
+            try {
+                supervisor.join(3000); // let it finish a start before stopping everything
+            } catch (InterruptedException ignored) {
+            }
         }
+        stopServing();
+        if (nowPlaying != null) nowPlaying.stop();
         Log.setHost(null);
     }
 
+    // ---- the player ------------------------------------------------------------------------
+
+    private void publishPlayer() {
+        String name = speakerName;
+        if (name.equals(publishedName)) return;
+        host.publishPlayer(PLAYER_KEY, name.length() > 80 ? name.substring(0, 80) : name, this);
+        publishedName = name;
+        if (player == null) status(idleStatus(), false);
+    }
+
+    @Override
+    public void onActivate(PluginPlayer player) {
+        Log.i("picked as the player; starting the AirPlay receiver");
+        this.player = player;
+        wake(); // the supervisor starts the helpers; this call must return quickly
+    }
+
+    @Override
+    public void onDeactivate() {
+        Log.i("no longer the player; stopping the AirPlay receiver");
+        player = null;
+        wake();
+    }
+
+    @Override
+    public void onCommand(String command, Map<String, Object> arguments) {
+        // No actions are offered: an AirPlay 2 sender gives a receiver no remote control.
+    }
+
+    private me.jxl.kiosk.plugins.AudioOutput openAudio(int sampleRate, int channels) {
+        PluginPlayer p = player;
+        if (p == null || !p.isActive()) throw new IllegalStateException("not the player");
+        return p.openAudio(sampleRate, channels, PluginPlayer.ENCODING_PCM_16);
+    }
+
+    private void showState(Map<String, Object> state) {
+        PluginPlayer p = player;
+        if (p == null || !p.isActive()) return;
+        try {
+            p.update(state);
+        } catch (RuntimeException e) {
+            Log.d("can't update Now Playing: " + e);
+        }
+    }
+
+    private String idleStatus() {
+        return "Not the player. Pick \"AirPlay 2 Speaker: " + speakerName
+                + "\" under Settings > Media Player > Player to start the AirPlay receiver.";
+    }
+
+    // ---- the helpers -------------------------------------------------------------------------
+
     private void supervise() {
         int quickExits = 0;
-        long startedAt = 0, companionCheckedAt = 0;
+        long startedAt = 0;
         while (running) {
-            // Keep the Now Playing app's service running (Android may stop it); a no-op if it runs.
-            if (companionReady && System.currentTimeMillis() - companionCheckedAt > 60000) {
-                companionCheckedAt = System.currentTimeMillis();
-                companion.startService();
+            if (player == null) {
+                if (serving) {
+                    stopServing();
+                    status(idleStatus(), false);
+                }
+                quickExits = 0;
+                startedAt = 0;
+                sleep(5000);
+                continue;
             }
             try {
+                if (!serving) {
+                    mdns.start();
+                    serving = true;
+                }
                 nqptp.start();
                 if (!shairport.isRunning()) {
                     if (startedAt != 0) {
@@ -143,71 +180,57 @@ public class AirPlay2Plugin implements KioskPlugin {
                         if (quickExits >= 3) {
                             status("shairport-sync keeps stopping:\n" + shairport.lastLines(), true);
                             sleep(Math.min(60000, 5000L * quickExits));
-                            if (!running) break;
+                            if (!running || player == null) continue;
                         }
                     }
                     shairport.start();
                     startedAt = System.currentTimeMillis();
-                    applyGain();
                 }
                 String how = nqptp.mode() == Nqptp.Mode.APP ? "no root needed" : "timing (NQPTP) runs as root";
                 status("Running as \"" + speakerName + "\" (" + how + ")", false);
             } catch (Exception e) {
                 status(e.getMessage() != null ? e.getMessage() : e.toString(), true);
                 sleep(10000);
+                continue;
             }
             sleep(2000);
         }
     }
 
+    /** Stops shairport-sync, NQPTP and the mDNS records, in parallel where it helps. */
+    private synchronized void stopServing() {
+        Thread a = new Thread(() -> { if (shairport != null) shairport.stop(); });
+        Thread b = new Thread(() -> { if (nqptp != null) nqptp.stop(); }); // root NQPTP needs one more su call
+        a.start();
+        b.start();
+        try {
+            a.join(1500);
+        } catch (InterruptedException ignored) {
+        }
+        if (mdns != null) mdns.stop(); // after shairport-sync, which withdraws its records as it exits
+        try {
+            b.join(1800);
+        } catch (InterruptedException ignored) {
+        }
+        if (nowPlaying != null) nowPlaying.end();
+        serving = false;
+    }
+
     private volatile boolean wakeRequested;
 
-    /** Ends the supervisor's current wait early (after a settings change). */
+    /** Ends the supervisor's current wait early. */
     private void wake() { wakeRequested = true; }
 
     private void sleep(long ms) {
         long end = System.currentTimeMillis() + ms;
         while (running && !wakeRequested && System.currentTimeMillis() < end) {
             try {
-                Thread.sleep(100);
+                Thread.sleep(50);
             } catch (InterruptedException e) {
                 return; // stop()
             }
         }
         wakeRequested = false;
-    }
-
-    private void readMediaVolume() {
-        Map<String, Object> args = new HashMap<>();
-        args.put("channel", "media");
-        host.executeCommand("getVolume", args, (ok, data, error) -> {
-            if (!ok) {
-                Log.d("getVolume failed: " + error);
-                return;
-            }
-            Object v = data instanceof Map ? ((Map<?, ?>) data).get("percent") : data;
-            if (v instanceof Number) {
-                mediaPercent = ((Number) v).doubleValue();
-                applyGain();
-            }
-        });
-    }
-
-    private void applyGain() {
-        Shairport s = shairport;
-        if (s == null) return;
-        s.setGain((float) gain(followMediaVolume, mediaPercent, assistantActive, duckPercent));
-    }
-
-    /** Media volume uses a cubic curve, like PulseAudio's percent scale; the duck level is linear. */
-    static double gain(boolean followMediaVolume, double mediaPercent, boolean assistantActive, double duckPercent) {
-        double g = 1.0;
-        if (followMediaVolume) {
-            double m = Math.max(0, Math.min(100, mediaPercent)) / 100.0;
-            g = m * m * m;
-        }
-        if (assistantActive) g *= Math.max(0, Math.min(100, duckPercent)) / 100.0;
-        return g;
     }
 
     private void readSettings(Map<String, Object> s) {
@@ -216,10 +239,6 @@ public class AirPlay2Plugin implements KioskPlugin {
         if (v instanceof String && !((String) v).trim().isEmpty()) speakerName = ((String) v).trim();
         v = s.get("latencyOffsetMs");
         if (v instanceof Number) offsetMs = ((Number) v).doubleValue();
-        v = s.get("followMediaVolume");
-        if (v instanceof Boolean) followMediaVolume = (Boolean) v;
-        v = s.get("duckPercent");
-        if (v instanceof Number) duckPercent = ((Number) v).doubleValue();
         v = s.get("statistics");
         if (v instanceof Boolean) statistics = (Boolean) v;
     }

@@ -40,18 +40,6 @@ jobs:
           key: native-downloads-${{ hashFiles('native/build.sh') }}
       - name: Build shairport-sync and NQPTP
         run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.3.13750724" native/build.sh
-      - name: Build the Now Playing companion app
-        env:
-          COMPANION_KEYSTORE_BASE64: ${{ secrets.COMPANION_KEYSTORE_BASE64 }}
-          COMPANION_KEYSTORE_PASSWORD: ${{ secrets.COMPANION_KEYSTORE_PASSWORD }}
-        run: |
-          if [ -z "$COMPANION_KEYSTORE_BASE64" ] || [ -z "$COMPANION_KEYSTORE_PASSWORD" ]; then
-            echo "Add the COMPANION_KEYSTORE_BASE64 and COMPANION_KEYSTORE_PASSWORD repository secrets." >&2
-            exit 1
-          fi
-          echo "$COMPANION_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/companion.jks"
-          COMPANION_KEYSTORE="$RUNNER_TEMP/companion.jks" companion/build.sh
-          rm -f "$RUNNER_TEMP/companion.jks"
       - name: Test
         run: python3 tools/test.py
       - name: Build
