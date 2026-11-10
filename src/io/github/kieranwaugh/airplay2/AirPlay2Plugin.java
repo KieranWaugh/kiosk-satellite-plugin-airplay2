@@ -155,7 +155,7 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     }
 
     private String idleStatus() {
-        return "Not the player. Pick \"AirPlay 2 Speaker: " + speakerName
+        return "Not the player. Pick \"AirPlay 2 Speaker for Kiosk Satellite (multiroom and sync): " + speakerName
                 + "\" under Settings > Media Player > Player to start the AirPlay receiver.";
     }
 
