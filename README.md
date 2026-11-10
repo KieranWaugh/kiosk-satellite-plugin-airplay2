@@ -4,16 +4,29 @@ Makes a [Kiosk Satellite](https://github.com/jxlarrea/kiosk-satellite) device an
 
 Not affiliated with Apple. AirPlay is a trademark of Apple Inc.
 
-## Install
+Needs Kiosk Satellite 2026.11.14 or newer, on Android 8.0 or newer on a device that runs 32-bit ARM code (`armeabi-v7a`).
 
-You need Kiosk Satellite 2026.11.14 or newer, on Android 8.0 or newer on a device that runs 32-bit ARM code (`armeabi-v7a`).
+## Installation
+
+### Community Plugins (Recommended)
+
+AirPlay 2 Speaker for Kiosk Satellite (multiroom and sync) is listed in [Community Plugins](https://kiosksatellite.com/plugins/). Use the button below to open it in your Kiosk Satellite and install it.
+
+[![Install in Kiosk Satellite](https://kiosksatellite.com/img/badges/plugin-add.svg)](https://kiosksatellite.com/redirect/plugin/?repository=KieranWaugh/kiosk-satellite-plugin-airplay2)
+
+Or search for `AirPlay 2 Speaker for Kiosk Satellite (multiroom and sync)` in **Settings > Plugin Manager > Browse plugins** in Kiosk Satellite.
+
+### Manual
 
 1. Open **Settings > Plugin Manager** in Kiosk Satellite and turn on **Enable Plugins**.
-2. Choose **Add plugin**, paste `https://github.com/KieranWaugh/kiosk-satellite-plugin-airplay2`, choose **Preview**, then **Trust and install**.
-   Or download the ZIP from [Releases](https://github.com/KieranWaugh/kiosk-satellite-plugin-airplay2/releases) and use **Developer Tools > Install from ZIP**.
-3. If your device needs root for the timing ports (most do), set up one of the [methods below](#timing-ports-which-method).
-4. Set **Speaker name** and enable the plugin.
-5. Under **Settings > Media Player > Player**, pick **AirPlay 2 Speaker for Kiosk Satellite (multiroom and sync): <speaker name>** under **This device**.
+2. Choose **Add plugin**, paste `https://github.com/KieranWaugh/kiosk-satellite-plugin-airplay2` and choose **Preview**.
+3. Review the plugin and choose **Trust and install**.
+
+### Setup
+
+1. If your device needs root for the timing ports (most do), set up one of the [methods below](#timing-ports-which-method).
+2. Set **Speaker name** and enable the plugin.
+3. Under **Settings > Media Player > Player**, pick **AirPlay 2 Speaker for Kiosk Satellite (multiroom and sync): <speaker name>** under **This device**.
 
 The speaker shows up in the AirPlay menu while it is the picked player. The plugin's status line shows the name and how the timing ports are reached: `no root needed`, `PTP ports redirected with Shizuku`, `PTP ports redirected with su` or `timing (NQPTP) runs as root`.
 
@@ -62,6 +75,19 @@ If `su` works but the kernel has no `iptables` NAT for the redirect, NQPTP runs 
 
 - **Benefits:** works on kernels that can't redirect.
 - **Drawbacks:** a root process runs for as long as AirPlay is on. Needs `su`; Shizuku can't do it.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Speaker name | Kiosk Satellite | The name in the AirPlay menu. Give each device its own. |
+| Sync offset (ms) | 0 | Moves playback against the other speakers in a group. Negative plays earlier. Tune it by ear next to a HomePod. |
+| Log sync statistics | Off | Writes shairport-sync's sync figures to the app log every few seconds. |
+
+## Where data goes
+
+- **Nowhere outside your network.** While the plugin is the picked player, the speaker listens on your local network (TCP 7000, UDP 319/320 and the ports AirPlay negotiates) and is advertised there with Android's own mDNS. Audio and track info pass between shairport-sync and the plugin over pipes and the device's loopback address only.
+- **Files:** the settings, a random device ID and the shairport-sync config, in Kiosk Satellite's private storage.
 
 ## License
 
