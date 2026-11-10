@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3 - 2026-11-10
+
+- README: the devices it has been tested on (Echo Show 5 and Echo Dot, 2nd gen) with their root methods, how to set up Magisk or Shizuku on each, and why the plugin doesn't keep Shizuku running across reboots.
+
 ## 1.0.2 - 2026-11-10
 
 - With Shizuku, a missing redirect rule is now put back: the repair command came straight after the check, and Kiosk Satellite refuses a Shizuku command within 250 ms of the previous one. Shizuku commands are now spaced out, and the first check waits 30 seconds after AirPlay starts.

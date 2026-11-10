@@ -60,7 +60,7 @@ If the device already lets apps open ports 319 and 320, NQPTP uses them directly
 Start [Shizuku](https://shizuku.rikka.app/) as root (on Kiosk Satellite's Echo builds, turn on **Rooted debugging** in Developer options and start Shizuku through `adb root`). Then grant access under **Settings > Device > Shizuku** in Kiosk Satellite.
 
 - **Benefits:** survives image updates, because nothing changes the system or boot partitions. No toast pops up for each command. The plugin checks the rules every 30 seconds and puts them back if something removed them.
-- **Drawbacks:** Shizuku has to be started again after each reboot. Shizuku running as the shell user (uid 2000) isn't enough; it has to be root.
+- **Drawbacks:** Shizuku has to be started again after each reboot, from a computer with root ADB, and on some images root ADB has to stay on while it runs (see [why](#why-the-plugin-doesnt-keep-shizuku-running-across-reboots)). Shizuku running as the shell user (uid 2000) isn't enough; it has to be root.
 
 ### su (such as Magisk)
 
@@ -75,6 +75,50 @@ If `su` works but the kernel has no `iptables` NAT for the redirect, NQPTP runs 
 
 - **Benefits:** works on kernels that can't redirect.
 - **Drawbacks:** a root process runs for as long as AirPlay is on. Needs `su`; Shizuku can't do it.
+
+### Why the plugin doesn't keep Shizuku running across reboots
+
+Shizuku stops at every reboot, and starting it as root again needs root ADB (`adb root`), because these images have no `su` until you add Magisk. A plugin could do that itself at boot, by keeping ADB listening on the network and signing in to it with a key of its own. This plugin doesn't, because:
+
+- **It leaves a root shell open on the network.** ADB as root on port 5555 is open to anything that can reach it. On the Echo Dot image ADB doesn't check keys at all (`ro.adb.secure=0`), so anyone on the Wi-Fi would get root with `adb connect`, no key needed.
+- **The key is root.** Elsewhere the plugin would have to store a root ADB key in its settings, where Kiosk Satellite's configuration exports and Fleet Management's plugin secrets can carry it off the device.
+- **Root ADB can't be switched off behind it.** On the Echo Dot image, `adb unroot` and `biscuit_service adb root off` restart ADB, and that stops Shizuku too. Shizuku as root only lasts as long as root ADB stays on.
+- **It's a lot of security-sensitive code** (an ADB client with its own sign-in) to do something the image could do safely.
+
+Use `su` (Magisk) for a device that has to come back by itself after a power cut. For Shizuku without Magisk, the safe fixes belong in the image: ADB that requires keys, starting Shizuku as root at boot, or letting apps open ports 319 and 320 (which needs no root at all).
+
+## Tested devices
+
+| Device | Image | Kiosk Satellite | Root | Result |
+| --- | --- | --- | --- | --- |
+| Echo Show 5 (2nd gen, `cronos`) | [Kiosk Satellite Edition of LineageOS](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite) 18.1 (Android 11), kernel 4.9 | 2026.11.14 | Magisk 31.1 (`su`) | Plays alone and grouped with a HomePod and an Echo Dot. Sync settles within about 2 ms |
+| Echo Show 5 (2nd gen) | same | 2026.11.14 | Shizuku 13.6 as root, started through `adb root` | Plays. Shizuku has to be started again after each reboot. The 30-second rule repair was fixed in 1.0.2 and not tested again since |
+| Echo Dot (2nd gen, `biscuit`) | [Echo Dot image](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite/blob/main/docs/echo-dot.md), LineageOS 18.1 (Android 11), kernel 4.9 | 2026.11.14 | Magisk 31.1 (`su`) | Plays alone and grouped with a HomePod and an Echo Show. Sync settles within about 2 ms. Comes back by itself after a power cut. Uses about 14 MB of the Dot's memory |
+
+Neither kernel has `ip6tables` NAT, so on both the plugin listens on IPv4 only.
+
+### Root on these devices
+
+**Echo Show 5 with Magisk.** In TWRP, **Advanced > ADB Sideload**, then `adb sideload Magisk.zip` (a copy of `Magisk-v31.1.apk`). Reboot, install the Magisk app with `adb install`, and allow **Kiosk Satellite** under **Magisk > Superuser** (Magisk 31 shows no prompt, so add it in advance).
+
+**Echo Dot with Magisk.** The Dot has no screen, so everything goes through `adb`, with the Dot plugged into a computer's USB port (not a hub):
+
+1. `adb reboot recovery`, then check `adb shell bcbtool get_active` prints `a`. If not: `adb shell bcbtool set_active a`, then `adb reboot recovery` again, so TWRP starts on slot A.
+2. Back up both boot slots: `adb shell dd if=/dev/block/by-name/boot_a of=/tmp/boot_a.img` (and `boot_b`), then `adb pull` them.
+3. `adb push Magisk.zip /tmp/` and `adb shell twrp install /tmp/Magisk.zip`. Check the `Target image` line: the bootloader always starts slot A, so if Magisk patched `boot_b`, copy it across with `adb shell dd if=/dev/block/by-name/boot_b of=/dev/block/by-name/boot_a`.
+4. `adb reboot`, `adb install Magisk-v31.1.apk`.
+5. Allow Kiosk Satellite without the Magisk app's screen, with root ADB on for these commands only:
+
+   ```sh
+   adb shell dumpsys package me.jxl.kiosk_satellite | grep userId   # e.g. userId=10018
+   adb shell biscuit_service adb root on && adb root
+   adb shell 'magisk --sqlite "REPLACE INTO policies (uid,policy,until,logging,notification) VALUES(10018,2,0,1,0)"'
+   adb unroot && adb shell biscuit_service adb root off
+   ```
+
+**After an image update** Magisk is gone on both devices (the update rewrites the boot partitions), so redirecting the ports stops working until you flash it again. The plugin and the Magisk permission survive. Image updates only install when you choose them.
+
+**Shizuku as root.** Turn on root ADB (on the Echo Dot: `adb shell biscuit_service adb root on`), then `adb root`, install Shizuku, and start it as root with `adb shell 'p=$(pm path moe.shizuku.privileged.api | sed s/package://); $(dirname $p)/lib/arm/libshizuku.so'` (or the command Shizuku shows under **Start via connected computer**). It should end with `shizuku_starter exit with 0`. Grant Kiosk Satellite access under **Settings > Device > Shizuku**; on a device without a screen, `adb shell pm grant me.jxl.kiosk_satellite moe.shizuku.manager.permission.API_V23` (Android marked it granted on the Echo Dot; the plugin wasn't run through Shizuku there). Leave root ADB on, since switching it off stops Shizuku on the Echo Dot image, and see [above](#why-the-plugin-doesnt-keep-shizuku-running-across-reboots) for what that exposes.
 
 ## Settings
 
