@@ -10,6 +10,7 @@
   "description": "Makes this kiosk an AirPlay 2 speaker that joins multi-room groups and plays in sync with HomePods and other AirPlay 2 speakers, using shairport-sync and NQPTP. Pick it under Settings > Media Player > Player: it plays through the kiosk's own output, so the echo canceller, the media volume and the assistant's duck apply, and Now Playing shows the track. AirPlay 2 timing needs UDP ports 319 and 320: where Android won't let the app open them, a moment of root (Shizuku running as root, or su such as Magisk) redirects them to ports the app can open. Not affiliated with Apple.",
   "author": "Kieran Waugh",
   "license": "MIT",
+  "icon": "icon.png",
   "headless": true,
   "capabilities": [
     "native",
