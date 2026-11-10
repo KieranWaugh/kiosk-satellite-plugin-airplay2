@@ -173,6 +173,7 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
                 }
                 quickExits = 0;
                 startedAt = 0;
+                lastCheck = 0;
                 sleep(5000);
                 continue;
             }
@@ -182,9 +183,14 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
                     serving = true;
                 }
                 nqptp.start();
-                if (System.currentTimeMillis() - lastCheck > 30000) {
-                    lastCheck = System.currentTimeMillis();
-                    nqptp.maintain(); // puts the PTP port redirect back if something removed it
+                // Every 30 s put the PTP port redirect back if something removed it. Not straight
+                // after starting: start() has just added it, and Shizuku takes four commands a second.
+                long now = System.currentTimeMillis();
+                if (lastCheck == 0) {
+                    lastCheck = now;
+                } else if (now - lastCheck > 30000) {
+                    lastCheck = now;
+                    nqptp.maintain();
                 }
                 if (shairport.isRunning() && shairport.ipv4Only() != nqptp.ipv4Only()) {
                     Log.i("timing changed between IPv4 only and both; restarting shairport-sync");

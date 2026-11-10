@@ -90,14 +90,20 @@ final class Root {
 
     /** Kiosk Satellite's Shizuku connection; only counts when its backend is root (uid 0). */
     static final class ShizukuShell implements Shell {
+        /** Kiosk Satellite refuses a Shizuku command sent within 250 ms of the previous one. */
+        static final long GAP_MS = 300;
         private final PluginHost host;
+        private long lastCall;
 
         ShizukuShell(PluginHost host) { this.host = host; }
 
         @Override public String name() { return "Shizuku"; }
 
         @Override
-        public Result run(String script, int timeoutMs) throws IOException, InterruptedException {
+        public synchronized Result run(String script, int timeoutMs) throws IOException, InterruptedException {
+            long wait = lastCall + GAP_MS - System.currentTimeMillis();
+            if (wait > 0) Thread.sleep(wait);
+            lastCall = System.currentTimeMillis();
             Map<String, Object> state;
             try {
                 state = host.shizukuState();

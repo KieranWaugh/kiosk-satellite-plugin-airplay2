@@ -3,7 +3,7 @@
   "apiVersion": 1,
   "id": "airplay2-speaker",
   "name": "AirPlay 2 Speaker for Kiosk Satellite (multiroom and sync)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAndroidSdk": 26,
   "minAppVersion": "2026.11.14",
   "entryClass": "io.github.kieranwaugh.airplay2.AirPlay2Plugin",

@@ -154,5 +154,40 @@ public class PortRedirectTest {
         later.find();
         later.forget();
         assert later.find() == nowUp;
+
+        shizukuGap();
+    }
+
+    /** Kiosk Satellite refuses a Shizuku command within 250 ms of the last; back-to-back runs must wait. */
+    private static void shizukuGap() throws Exception {
+        long[] last = {0};
+        int[] refused = {0};
+        me.jxl.kiosk.plugins.PluginHost host = (me.jxl.kiosk.plugins.PluginHost) java.lang.reflect.Proxy.newProxyInstance(
+                PortRedirectTest.class.getClassLoader(), new Class<?>[] {me.jxl.kiosk.plugins.PluginHost.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("shizukuState")) {
+                        java.util.Map<String, Object> s = new java.util.HashMap<>();
+                        s.put("available", true);
+                        s.put("granted", true);
+                        s.put("uid", 0);
+                        return s;
+                    }
+                    if (method.getName().equals("executeShizuku")) {
+                        long now = System.nanoTime();
+                        if (now - last[0] < 250_000_000L) {
+                            refused[0]++;
+                            throw new IllegalStateException("At most four Shizuku commands per second");
+                        }
+                        last[0] = now;
+                        java.util.Map<String, Object> r = new java.util.HashMap<>();
+                        r.put("exitCode", 0);
+                        r.put("stdout", "ok");
+                        ((me.jxl.kiosk.plugins.PluginHost.CommandCallback) args[2]).onResult(true, r, null);
+                        return null;
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        Root.ShizukuShell shell = new Root.ShizukuShell(host);
+        for (int i = 0; i < 3; i++) assert shell.run("x", 1000).ok();
+        assert refused[0] == 0 : "a command was sent too soon after the last";
     }
 }

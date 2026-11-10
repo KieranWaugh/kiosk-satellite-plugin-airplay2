@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 - 2026-11-10
+
+- Renamed to **AirPlay 2 Speaker for Kiosk Satellite (multiroom and sync)**.
+- With Shizuku, a missing redirect rule is now put back: the repair command came straight after the check, and Kiosk Satellite refuses a Shizuku command within 250 ms of the previous one. Shizuku commands are now spaced out, and the first check waits 30 seconds after AirPlay starts.
+- README follows the Community Plugins layout, with the install button.
+
 ## 1.0.0 - 2026-11-10
 
 NQPTP no longer runs as root, and the plugin has an icon.
