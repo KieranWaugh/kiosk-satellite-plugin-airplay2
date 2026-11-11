@@ -44,6 +44,13 @@ jobs:
         run: python3 tools/test.py
       - name: Build
         run: python3 tools/build.py --android-platform 35 --version "${GITHUB_REF_NAME#v}"
+      - name: Package the native sources
+        # The build script and every patch and added file, next to the pinned upstream
+        # tarballs, so the release carries the complete source of the packaged programs.
+        run: |
+          tar -czf dist/native-sources.tar.gz --exclude=native/work --exclude=native/out \
+            native LICENSE assets/licenses
+          (cd native/work/downloads && sha256sum *) > dist/native-sources.sha256
       - name: Attach plugin assets to the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,3 +59,11 @@ jobs:
             dist/*.zip \
             dist/*.zip.sha256 \
             dist/kiosk-satellite-plugin.json --clobber
+      - name: Attach the exact sources to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/native-sources.tar.gz \
+            dist/native-sources.sha256 \
+            native/work/downloads/* --clobber

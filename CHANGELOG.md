@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 - 2026-11-10
+
+Fixes from the Community Plugins review. Needs Kiosk Satellite 2026.11.16 or newer.
+
+- **A device on the network could crash Kiosk Satellite.** A sender's Now Playing info (passed through by shairport-sync) with a huge length, or a dictionary that refers to the same child at every level, made the plist parser run out of memory, and the error took down the app. The parser now checks every length and offset against the data before allocating, and caps how many objects it builds (20,000), how many bytes it copies (4 MB) and how deep it goes (32). Every thread the plugin starts now catches `Throwable`.
+- **Callbacks return at once.** `onEvent("shizuku.state")` and `configure` used to take locks the supervisor holds during root commands (up to about 28 s), so Kiosk Satellite could time the callback out and turn the plugin off. They now only note the change for the supervisor.
+- **`stop()` returns within 2.5 s** (it could take about 6 s). Nothing starts a helper after `stop()`, even if it came while one was starting: before, shairport-sync could still be launched and was left running.
+- **Leftover redirect rules are removed.** With Shizuku the rules stayed until the next reboot, because Kiosk Satellite closed the plugin's Shizuku connection before the plugin stopped. Kiosk Satellite 2026.11.16 keeps it open during `stop()`, so the rules are now removed when AirPlay stops, with su as a fallback. If that fails (a crash, or a power cut mid-session), the next start removes them, and it never adds a second copy. The first start after upgrading from 1.0.x also checks for rules an earlier version left.
+- **mDNS from other apps.** The service records shairport-sync hands the plugin now go to a random port and carry a secret token made for each start (in shairport-sync's environment, which other apps can't read). Only `_airplay._tcp` and `_raop._tcp` are advertised, at most four services. Chunked metadata is capped at four items in progress, 1.25 MB each, for 10 s.
+- **Licences.** The package now has the full licence texts of every bundled component and a third-party notice with versions, upstream sources, checksums and changes (`assets/licenses/`). Each release has the pinned source tarballs and the patches attached.
+- README: the speaker has no password, and when the redirect rules are removed with Shizuku and with su.
+
 ## 1.0.3 - 2026-11-10
 
 - README: the devices it has been tested on (Echo Show 5 and Echo Dot, 2nd gen) with their root methods, how to set up Magisk or Shizuku on each, and why the plugin doesn't keep Shizuku running across reboots.

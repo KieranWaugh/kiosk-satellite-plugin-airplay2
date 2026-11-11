@@ -54,6 +54,7 @@ with tempfile.TemporaryDirectory(prefix='kiosk-plugin-test-') as directory:
         ['io.github.kieranwaugh.airplay2.AudioBridgeTest'],
         ['io.github.kieranwaugh.airplay2.PortRedirectTest'],
         ['io.github.kieranwaugh.airplay2.NowPlayingTest', str(fixtures)],
+        ['io.github.kieranwaugh.airplay2.HardeningTest', str(fixtures)],
     ]:
         subprocess.run([tool('java'), '-ea', '-cp', os.pathsep.join([str(classes), platform]), test, *test_args], check=True)
 

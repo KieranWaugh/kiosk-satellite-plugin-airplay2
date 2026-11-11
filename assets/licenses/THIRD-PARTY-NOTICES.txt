@@ -1,0 +1,118 @@
+AirPlay 2 Speaker for Kiosk Satellite: third-party notices
+==========================================================
+
+The plugin's own code (plugin.jar) and build scripts are under the MIT license in
+LICENSE. The package also contains two programs built from other people's work:
+
+  native/armeabi-v7a/libshairport.so   shairport-sync, statically linked with
+                                       OpenSSL, libsodium, libgcrypt, libgpg-error,
+                                       libplist, libconfig, popt and FFmpeg
+  native/armeabi-v7a/libnqptp.so       NQPTP
+
+Each is a separate program, started as its own process. Their licences are below
+and the full texts are in this folder (assets/licenses/ in the package).
+
+
+Source code
+-----------
+
+Every release at
+  https://github.com/KieranWaugh/kiosk-satellite-plugin-airplay2/releases
+has, attached next to the plugin ZIP, the exact source of every component (the
+pinned upstream tarballs listed below) and native-sources.tar.gz, which holds the
+build script (native/build.sh) and every patch and added file. The release's tag
+in the repository holds the same files. native/build.sh downloads each tarball,
+checks its SHA-256, applies the patches and builds both programs with the Android
+NDK, so you can rebuild them, or relink with a modified version of any of the
+LGPL libraries, and install the result with Plugin Manager > Developer Tools >
+Install from ZIP. This offer of source is also good for three years from each
+release, from the author through the repository's issues.
+
+
+Components
+----------
+
+shairport-sync 5.6.2
+  Copyright (c) 2014-2026 Mike Brady and the Shairport Sync contributors;
+  Copyright (c) 2011-2013 James Laird; pair_ap code by Espen Jurgensen and others.
+  MIT-style licence: shairport-sync-LICENSES.txt
+  Source: https://github.com/mikebrady/shairport-sync/archive/refs/tags/5.6.2.tar.gz
+  SHA-256 0747706e19a64ec550ec8a6a5c26bf8e231a4d032de31644f5a5daa0632c41c4
+  Modified: native/sps/android.patch (builds for Android), native/sps/ipv4-only.patch
+  (SPS_IPV4_ONLY), and an added output backend, native/sps/audio_plugin.c.
+  The compiled bundled code is pair_ap (MIT, in the same file).
+
+NQPTP 1.2.9
+  Copyright (c) 2021-2022 Mike Brady.
+  GNU General Public License, version 2: nqptp-GPL-2.0.txt
+  Source: https://github.com/mikebrady/nqptp/archive/refs/tags/1.2.9.tar.gz
+  SHA-256 6aa1d73b8ee760bf19378c319db0d0537a867ff961764b150e19f87d96a02210
+  Modified: native/nqptp/ports.patch (NQPTP_PORT_OFFSET), and built with the
+  compatibility layer in native/compat. The patch and the modified program are
+  under the GPL, version 2, like NQPTP.
+
+OpenSSL 3.5.9
+  Copyright (c) 1998-2026 The OpenSSL Project Authors.
+  Apache License 2.0: openssl-Apache-2.0.txt
+  Source: https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz
+  SHA-256 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+  Built with a reduced set of algorithms (see native/build.sh); the source is unchanged.
+
+FFmpeg 7.1.5 (libavcodec, libavformat, libavutil, libswresample)
+  Copyright (c) the FFmpeg developers.
+  GNU Lesser General Public License, version 2.1 or later: ffmpeg-LGPL-2.1.txt and
+  ffmpeg-LICENSE.md. Built without --enable-gpl or --enable-nonfree, with only the
+  AAC, ALAC and PCM decoders.
+  Source: https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz
+  SHA-256 de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+  Unmodified.
+
+libgcrypt 1.12.4
+  Copyright (C) Free Software Foundation, Inc. and g10 Code GmbH.
+  GNU Lesser General Public License, version 2.1 or later: libgcrypt-LGPL-2.1.txt;
+  further notices for some files: libgcrypt-LICENSES.txt
+  Source: https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.12.4.tar.bz2
+  SHA-256 d77f68f48879510e79a2f65977ccc68981781ea0923e5bdffac2a193ea3d660e
+  Unmodified.
+
+libgpg-error 1.61
+  Copyright (C) g10 Code GmbH and others.
+  GNU Lesser General Public License, version 2.1 or later: libgpg-error-LGPL-2.1.txt
+  Source: https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.61.tar.bz2
+  SHA-256 7a85413f2bc354f4f8aa832b718af122e48965e9e0eb9012ee659c13c6385c93
+  Unmodified.
+
+libplist 2.7.0
+  Copyright (c) 2008-2009 Jonathan Beck; Copyright (c) 2012-2023 Nikias Bassen.
+  GNU Lesser General Public License, version 2.1 or later: libplist-LGPL-2.1.txt
+  Source: https://github.com/libimobiledevice/libplist/releases/download/2.7.0/libplist-2.7.0.tar.bz2
+  SHA-256 7ac42301e896b1ebe3c654634780c82baa7cb70df8554e683ff89f7c2643eb8b
+  Unmodified (the library only; its tools are not included).
+
+libconfig 1.7.3
+  Copyright (C) 2005-2018 Mark A Lindner.
+  GNU Lesser General Public License, version 2.1 or later: libconfig-LGPL-2.1.txt
+  Source: https://github.com/hyperrealm/libconfig/releases/download/v1.7.3/libconfig-1.7.3.tar.gz
+  SHA-256 545166d6cac037744381d1e9cc5a5405094e7bfad16a411699bcff40bbb31ee7
+  Unmodified.
+
+libsodium 1.0.22
+  Copyright (c) 2013-2026 Frank Denis.
+  ISC License: libsodium-ISC.txt
+  Source: https://download.libsodium.org/libsodium/releases/libsodium-1.0.22.tar.gz
+  SHA-256 adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
+  Unmodified.
+
+popt 1.19
+  Copyright (c) 1998 Red Hat Software.
+  MIT License: popt-MIT.txt
+  Source: https://ftp.osuosl.org/pub/rpm/popt/releases/popt-1.x/popt-1.19.tar.gz
+  SHA-256 c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9
+  Unmodified.
+
+Added by this project (MIT, in LICENSE): native/compat/ (small replacements for
+functions Android's C library lacks, a dns_sd shim that hands services to the
+plugin, and a uuid shim), native/sps/audio_plugin.c and native/build.sh.
+
+Android's C++ runtime (LLVM libc++, Apache License 2.0 with LLVM Exceptions) is
+linked into libshairport.so by the NDK.

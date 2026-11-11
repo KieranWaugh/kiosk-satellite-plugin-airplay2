@@ -86,6 +86,29 @@ final class Root {
         return s.run(script, timeoutMs);
     }
 
+    /**
+     * Runs a tidy-up script with the way that worked before, falling back to su; with none found
+     * yet, each way in turn. Used from stop() too: Kiosk Satellite 2026.11.16 and newer keep the
+     * plugin's Shizuku access open while stop() runs and deliver the result on their own thread,
+     * so this can wait for it. Doesn't probe: a device without su fails at once.
+     */
+    Result runToTidy(String script, int timeoutMs) throws IOException, InterruptedException {
+        Shell first;
+        synchronized (this) { first = found; }
+        IOException failure = null;
+        for (Shell s : shells) {
+            if (first != null && s != first && !(s instanceof SuShell)) continue;
+            try {
+                Result r = s.run(script, timeoutMs);
+                if (r.ok()) return r;
+                failure = new IOException(s.name() + ": " + r.output);
+            } catch (IOException e) {
+                failure = new IOException(s.name() + ": " + e.getMessage());
+            }
+        }
+        throw failure != null ? failure : new IOException("no root");
+    }
+
     // ---- the two ways ------------------------------------------------------------------------
 
     /** Kiosk Satellite's Shizuku connection; only counts when its backend is root (uid 0). */
@@ -119,6 +142,7 @@ final class Root {
             String[] failure = new String[1];
             try {
                 host.executeShizuku(new String[] {"/system/bin/sh", "-c", script}, Math.max(100, Math.min(30000, timeoutMs)), (ok, data, error) -> {
+                  try {
                     if (ok && data instanceof Map) {
                         Map<?, ?> m = (Map<?, ?>) data;
                         Object code = m.get("exitCode");
@@ -129,13 +153,19 @@ final class Root {
                     } else {
                         failure[0] = error == null ? "failed" : error;
                     }
+                  } catch (Throwable e) { // this runs on Kiosk Satellite's thread
+                    failure[0] = String.valueOf(e);
+                  } finally {
                     done.countDown();
+                  }
                 });
             } catch (RuntimeException e) {
                 throw new IOException(String.valueOf(e.getMessage()));
             }
-            if (!done.await(timeoutMs + 8000L, TimeUnit.MILLISECONDS)) throw new IOException("no answer");
+            // Kiosk Satellite enforces the command's timeout itself; allow a little more for the answer.
+            if (!done.await(timeoutMs + Math.min(8000L, Math.max(500L, timeoutMs)), TimeUnit.MILLISECONDS)) throw new IOException("no answer");
             if (failure[0] != null) throw new IOException(failure[0]);
+            if (result[0] == null) throw new IOException("no result");
             return result[0];
         }
     }
@@ -162,16 +192,21 @@ final class Root {
                             if (out.size() < 32768) out.write(b, 0, n);
                         }
                     }
-                } catch (IOException ignored) {
+                } catch (Throwable ignored) { // nothing may escape a thread in Kiosk Satellite's process
                 }
             }, "airplay2-su");
             reader.setDaemon(true);
             reader.start();
-            if (!p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+            try {
+                if (!p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+                    p.destroyForcibly();
+                    return new Result(-1, "timed out (allow Kiosk Satellite in Magisk > Superuser)");
+                }
+                reader.join(500);
+            } catch (InterruptedException e) { // the plugin is stopping
                 p.destroyForcibly();
-                return new Result(-1, "timed out (allow Kiosk Satellite in Magisk > Superuser)");
+                throw e;
             }
-            reader.join(500);
             String text;
             synchronized (out) { text = new String(out.toByteArray(), StandardCharsets.UTF_8); }
             if (p.exitValue() != 0 && text.trim().isEmpty()) text = "refused (allow Kiosk Satellite in Magisk > Superuser)";

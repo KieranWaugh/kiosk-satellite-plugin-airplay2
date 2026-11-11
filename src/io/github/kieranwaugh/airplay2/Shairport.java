@@ -21,16 +21,16 @@ import java.util.concurrent.TimeUnit;
  * local UDP ports it sends to (mDNS records for MdnsBridge, track metadata for NowPlaying).
  */
 final class Shairport {
-    static final int MDNS_PORT = 5566;
-
     private final File dir, library, config;
     private final String hwAddr;
     private final AudioBridge.Opener opener;
-    private Process process;
+    private volatile Process process;
     private OutputStream stdin;
     private AudioBridge bridge;
     private final ArrayDeque<String> recent = new ArrayDeque<>();
     private volatile boolean logStatistics;
+    /** Set by close(): this instance never starts shairport-sync again. */
+    private volatile boolean closed;
 
     Shairport(File dir, String libraryPath, String hwAddr, AudioBridge.Opener opener) {
         this.dir = dir;
@@ -85,12 +85,15 @@ final class Shairport {
 
     boolean ipv4Only() { return ipv4Only; }
 
-    synchronized void start() throws IOException {
+    /** Starts shairport-sync, advertising through the MdnsBridge listening on mdnsPort with mdnsToken. */
+    synchronized void start(int mdnsPort, String mdnsToken) throws IOException {
+        if (closed) throw new IOException("stopping");
         if (isRunning()) return;
         ProcessBuilder pb = new ProcessBuilder("/system/bin/linker", library.getPath(), "-c", config.getPath());
         pb.environment().put("NQPTP_SHM_DIR", dir.getPath());
         if (ipv4Only) pb.environment().put("SPS_IPV4_ONLY", "1");
-        pb.environment().put("SPS_MDNS_PORT", Integer.toString(MDNS_PORT));
+        pb.environment().put("SPS_MDNS_PORT", Integer.toString(mdnsPort));
+        pb.environment().put("SPS_MDNS_TOKEN", mdnsToken);
         pb.environment().put("SPS_HW_ADDR", hwAddr);
         pb.environment().put("HOME", dir.getPath());
         pb.directory(dir);
@@ -108,6 +111,16 @@ final class Shairport {
     synchronized boolean isRunning() { return process != null && process.isAlive(); }
 
     synchronized int exitCode() { return process != null && !process.isAlive() ? process.exitValue() : 0; }
+
+    /**
+     * For the plugin's stop(): no start() from now on, and kill what's running without waiting for
+     * the lock (a start() may be holding it). stop() still has to tidy up.
+     */
+    void close() {
+        closed = true;
+        Process p = process;
+        if (p != null) p.destroy();
+    }
 
     synchronized void stop() {
         if (process == null) return;
@@ -140,6 +153,14 @@ final class Shairport {
     }
 
     private void readLog(Process p) {
+        try {
+            readLogLines(p);
+        } catch (Throwable e) { // plugins run inside Kiosk Satellite's process: nothing may escape the thread
+            Log.w("shairport-sync log", e);
+        }
+    }
+
+    private void readLogLines(Process p) {
         try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getErrorStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = r.readLine()) != null) {

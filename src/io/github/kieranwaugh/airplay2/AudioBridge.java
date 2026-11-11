@@ -70,7 +70,7 @@ final class AudioBridge {
             run();
         } catch (EOFException e) {
             // the helper exited
-        } catch (IOException e) {
+        } catch (Throwable e) { // plugins run inside Kiosk Satellite's process: nothing may escape the thread
             if (running) Log.w("audio from shairport-sync", e);
         }
     }
@@ -150,6 +150,14 @@ final class AudioBridge {
     }
 
     private void clockLoop() {
+        try {
+            clockLines();
+        } catch (Throwable e) { // as readLoop
+            if (running) Log.w("audio clock", e);
+        }
+    }
+
+    private void clockLines() {
         long[] ts = new long[2];
         long lastFrame = -1, lastEpoch = -1;
         while (running) {

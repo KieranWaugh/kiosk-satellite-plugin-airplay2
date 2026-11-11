@@ -20,6 +20,11 @@ import java.util.concurrent.TimeUnit;
  *    only to set NQPTP's real-time priority, check the rules and remove them on stop;
  *  - ROOT: only if the redirect fails (no iptables NAT) and su works: NQPTP itself runs as root.
  * NQPTP shares its clock with shairport-sync through the file dir/nqptp.
+ *
+ * The file dir/redirect-added exists while the redirect may be in place. stop() removes the rules
+ * (Kiosk Satellite 2026.11.16 and newer keep the plugin's Shizuku access open while stop() runs);
+ * if that fails, or the plugin crashed or the device restarted mid-session, the next start removes
+ * them (tidyUp) if it finds the file.
  */
 final class Nqptp {
     enum Mode { APP, REDIRECT, ROOT }
@@ -30,9 +35,11 @@ final class Nqptp {
     private static final String STOP_ROOT_NQPTP = "for p in $(pidof linker); do grep -q libnqptp /proc/$p/cmdline 2>/dev/null"
             + " && [ \"$(stat -c %u /proc/$p)\" = 0 ] && kill $p; done; ";
 
-    private final File dir, library, pidFile, shmFile;
+    private final File dir, library, pidFile, shmFile, redirectMarker, upgradeChecked;
     private final Root root;
-    private Process process;
+    private volatile Process process;
+    /** Set by close(): this instance never starts NQPTP again. */
+    private volatile boolean closed;
     private Mode mode;
     private Root.Shell redirectedBy;
     private boolean ipv6Redirected;
@@ -43,7 +50,65 @@ final class Nqptp {
         this.library = new File(libraryPath);
         this.pidFile = new File(dir, "nqptp.pid");
         this.shmFile = new File(dir, "nqptp");
+        this.redirectMarker = new File(dir, "redirect-added");
+        this.upgradeChecked = new File(dir, "redirect-marker-used");
         this.root = root;
+    }
+
+    /**
+     * Versions before 1.1.0 wrote no marker, so rules one of them left behind would never be
+     * tidied. Once, on the first start after such an upgrade (an earlier version's device-id file
+     * exists), assume they may remain, unless this device lets apps open 319/320 (then no version
+     * ever needed the redirect). Call before anything writes device-id. Only file checks and a
+     * quick bind, so fine on the caller's thread.
+     */
+    void noteUpgrade() {
+        if (upgradeChecked.exists()) return;
+        try {
+            if (new File(dir, "device-id").exists() && !checkPorts(319, 320).equals("free")) {
+                Files.write(redirectMarker.toPath(), new byte[0]);
+                Log.i("upgraded from a version before 1.1.0: will check for a PTP port redirect it left");
+            }
+            Files.write(upgradeChecked.toPath(), new byte[0]);
+        } catch (IOException e) {
+            Log.d("can't write the redirect marker: " + e.getMessage());
+        }
+    }
+
+    /** True if an earlier session may have left the redirect in place. */
+    boolean redirectMayRemain() { return redirectMarker.exists(); }
+
+    /**
+     * Removes a redirect an earlier session left behind (see the class comment). For the
+     * supervisor, while this device isn't the player. Returns true once nothing is left to do.
+     */
+    synchronized boolean tidyUp() throws InterruptedException {
+        if (!redirectMarker.exists() || mode != null) return true;
+        try {
+            Root.Result r = root.runToTidy(PortRedirect.removeScript(), 5000);
+            if (r.ok()) {
+                redirectMarker.delete();
+                Log.i("removed the PTP port redirect an earlier session left");
+                return true;
+            }
+        } catch (IOException e) {
+            Log.d("can't remove the earlier PTP port redirect yet: " + e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * For the plugin's stop(): no start from now on, and NQPTP is killed without waiting for the
+     * lock (a start() may hold it while a root command runs). stop() still has to tidy up.
+     */
+    void close() {
+        closed = true;
+        Process p = process;
+        if (p != null) p.destroy();
+    }
+
+    private void checkOpen() throws IOException {
+        if (closed) throw new IOException("stopping");
     }
 
     Mode mode() { return mode; }
@@ -58,6 +123,7 @@ final class Nqptp {
 
     /** Starts NQPTP, or throws with a message for the plugin's status line. */
     synchronized void start() throws IOException, InterruptedException {
+        checkOpen();
         if (isRunning()) return;
         // For ports below 1024 the kernel checks permission before "in use", so an app gets
         // "refused" even when another NQPTP holds them. Only the "free" case is certain.
@@ -78,7 +144,11 @@ final class Nqptp {
             Thread.sleep(300);
         }
         // A root NQPTP an earlier version left running would sit on 319/320 for nothing: stop it.
-        Root.Result r = root.run(STOP_ROOT_NQPTP + PortRedirect.addScript(), 20000);
+        // Then remove any rules an earlier session left (so no copies pile up) and add them.
+        checkOpen();
+        Files.write(redirectMarker.toPath(), new byte[0]);
+        Root.Result r = root.run(STOP_ROOT_NQPTP + PortRedirect.replaceScript(), 20000);
+        checkOpen();
         if (r.ok()) {
             ipv6Redirected = r.output.contains(PortRedirect.IP6TABLES + " ok");
             if (!ipv6Redirected) Log.d("no IPv6 PTP redirect, so AirPlay listens on IPv4 only: " + r.output);
@@ -90,6 +160,7 @@ final class Nqptp {
             return;
         }
         Log.i("can't redirect the PTP ports: " + r.output);
+        if (r.output.contains(PortRedirect.IPTABLES + " failed")) redirectMarker.delete(); // nothing was added
         if (shell instanceof Root.SuShell) {
             startAsRoot();
             return;
@@ -122,8 +193,12 @@ final class Nqptp {
         }
     }
 
-    /** Stops NQPTP and removes the redirect. Uses root once more, so allow about a second. */
-    synchronized void stop() {
+    /**
+     * Stops NQPTP and removes the redirect, for the plugin's stop() (allow about 1.5 s). NQPTP was
+     * already sent SIGTERM by close(), so the rules go first: the command waits for root, and
+     * NQPTP exits meanwhile.
+     */
+    synchronized void stop() throws InterruptedException {
         if (mode == Mode.ROOT) {
             int pid = pid();
             if (pid > 0) {
@@ -135,25 +210,30 @@ final class Nqptp {
                 }
             }
         }
-        stopProcess();
         if (mode == Mode.REDIRECT) {
             try {
-                Root.Result r = root.run(PortRedirect.removeScript(), 5000);
-                if (!r.ok()) Log.i("removing the PTP port redirect: " + r.output);
-            } catch (Exception e) {
-                Log.i("can't remove the PTP port redirect: " + e);
+                root.runToTidy(PortRedirect.removeScript(), TIDY_TIMEOUT_MS);
+                redirectMarker.delete();
+                Log.i("removed the PTP port redirect");
+            } catch (IOException e) {
+                Log.i("can't remove the PTP port redirect now (the next start will): " + e.getMessage());
             }
         }
+        stopProcess();
         pidFile.delete();
         mode = null;
         redirectedBy = null;
         ipv6Redirected = false;
     }
 
+    /** How long the root command that removes the rules may take in stop(). */
+    static final int TIDY_TIMEOUT_MS = 1000;
+
     // ---- starting ----------------------------------------------------------------------------
 
     /** Runs NQPTP as Kiosk Satellite. The shell writes its pid, then becomes NQPTP. */
     private void launch(int offset) throws IOException, InterruptedException {
+        checkOpen();
         ProcessBuilder pb = new ProcessBuilder("/system/bin/sh", "-c",
                 "echo $$ > " + q(pidFile.getPath()) + "; exec /system/bin/linker " + q(library.getPath()));
         pb.environment().put("NQPTP_SHM_DIR", dir.getPath());
@@ -161,10 +241,12 @@ final class Nqptp {
         pb.redirectErrorStream(true);
         process = pb.start();
         drain(process, "nqptp");
+        if (closed) process.destroy(); // close() ran while this was starting
         for (int i = 0; i < 5 && process.isAlive(); i++) Thread.sleep(100);
         if (!process.isAlive()) {
             String out = lastOutput();
             process = null;
+            checkOpen();
             if (out.contains("Address already in use")) throw new IOException(IN_USE);
             throw new IOException("NQPTP stopped straight away: " + (out.isEmpty() ? "no output" : out));
         }
@@ -192,6 +274,7 @@ final class Nqptp {
 
     /** Last resort: NQPTP itself as root through su (the 0.3/0.4 way). */
     private void startAsRoot() throws IOException, InterruptedException {
+        checkOpen();
         // Root can see every process (apps can't: /proc is hidepid=2), so first stop any root
         // NQPTP this plugin left running, e.g. from before Kiosk restarted.
         String cmd = "for p in $(pidof linker); do grep -q libnqptp /proc/$p/cmdline 2>/dev/null && kill $p; done; "
@@ -199,6 +282,7 @@ final class Nqptp {
                 + " exec /system/bin/linker " + q(library.getPath());
         process = new ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start();
         drain(process, "nqptp (root)");
+        if (closed) process.destroy();
         // Magisk's su stays alive as long as the root command runs, so a live su after 2 s
         // means NQPTP is up. An early exit means su was refused or NQPTP failed.
         for (int i = 0; i < 20 && process.isAlive(); i++) Thread.sleep(100);
@@ -288,7 +372,7 @@ final class Nqptp {
                         while (output.size() > 4) output.removeFirst();
                     }
                 }
-            } catch (IOException ignored) {
+            } catch (Throwable ignored) { // nothing may escape a thread in Kiosk Satellite's process
             }
         }, "airplay2-" + tag);
         t.setDaemon(true);

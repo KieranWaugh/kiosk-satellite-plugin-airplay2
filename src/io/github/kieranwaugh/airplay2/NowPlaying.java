@@ -34,9 +34,26 @@ final class NowPlaying {
     private Thread thread;
     private volatile boolean running;
 
-    // Chunked items being put back together, keyed by "type/code/count" (receiver thread only).
-    private final Map<String, byte[][]> chunks = new HashMap<>();
-    private final Map<String, Integer> chunkCounts = new HashMap<>();
+    /** Items being put back together from chunks, at most this many at once (the oldest is dropped). */
+    static final int MAX_PARTIAL_ITEMS = 4;
+    /** A chunked item may total at most this many bytes (artwork, plus room for the rest). */
+    static final int MAX_ITEM_BYTES = MAX_ARTWORK + (256 << 10);
+    /** A partial item that hasn't been completed in this long is dropped. */
+    static final long PARTIAL_TIMEOUT_MS = 10_000;
+
+    // Chunked items being put back together, keyed by "type/code/count", oldest first (receiver thread only).
+    private final Map<String, Partial> chunks = new java.util.LinkedHashMap<>();
+
+    private static final class Partial {
+        final byte[][] parts;
+        final long started;
+        int received;
+        long bytes;
+        Partial(int count, long now) {
+            parts = new byte[count][];
+            started = now;
+        }
+    }
 
     // The track (guarded by this).
     private final Map<String, Object> info = new HashMap<>();
@@ -66,6 +83,9 @@ final class NowPlaying {
 
     int port() { return socket.getLocalPort(); }
 
+    /** How many chunked items are waiting for more chunks (for the tests). */
+    int partialItems() { return chunks.size(); }
+
     void stop() {
         running = false;
         if (socket != null) socket.close();
@@ -80,18 +100,23 @@ final class NowPlaying {
     }
 
     private void receiveLoop() {
-        byte[] buf = new byte[70000];
-        while (running) {
-            try {
-                DatagramPacket p = new DatagramPacket(buf, buf.length);
-                socket.receive(p);
-                if (p.getLength() < 8) continue;
-                byte[] d = new byte[p.getLength()];
-                System.arraycopy(buf, 0, d, 0, d.length);
-                onPacket(d);
-            } catch (Exception e) {
-                if (running) Log.w("metadata", e);
+        // Plugins run inside Kiosk Satellite's process: nothing thrown here may escape the thread.
+        try {
+            byte[] buf = new byte[70000];
+            while (running) {
+                try {
+                    DatagramPacket p = new DatagramPacket(buf, buf.length);
+                    socket.receive(p);
+                    if (p.getLength() < 8) continue;
+                    byte[] d = new byte[p.getLength()];
+                    System.arraycopy(buf, 0, d, 0, d.length);
+                    onPacket(d);
+                } catch (Throwable e) {
+                    if (running) Log.w("metadata", e);
+                }
             }
+        } catch (Throwable e) {
+            Log.w("metadata receiver stopped", e);
         }
     }
 
@@ -112,26 +137,33 @@ final class NowPlaying {
             String it = ascii(d, 16), ic = ascii(d, 20);
             if (count <= 0 || count > 64 || ix < 0 || ix >= count) return;
             String key = it + "/" + ic + "/" + count;
-            byte[][] parts = chunks.get(key);
-            if (parts == null) {
-                parts = new byte[count][];
-                chunks.put(key, parts);
-                chunkCounts.put(key, 0);
+            long now = System.currentTimeMillis();
+            chunks.values().removeIf(x -> now - x.started > PARTIAL_TIMEOUT_MS);
+            Partial item = chunks.get(key);
+            if (item == null) {
+                while (chunks.size() >= MAX_PARTIAL_ITEMS) {
+                    chunks.remove(chunks.keySet().iterator().next());
+                }
+                item = new Partial(count, now);
+                chunks.put(key, item);
             }
-            if (parts[ix] == null) {
+            if (item.parts[ix] == null) {
+                item.bytes += d.length - 24;
+                if (item.bytes > MAX_ITEM_BYTES) {
+                    chunks.remove(key);
+                    Log.d("dropped a chunked metadata item over " + MAX_ITEM_BYTES + " bytes");
+                    return;
+                }
                 byte[] part = new byte[d.length - 24];
                 System.arraycopy(d, 24, part, 0, part.length);
-                parts[ix] = part;
-                chunkCounts.put(key, chunkCounts.get(key) + 1);
+                item.parts[ix] = part;
+                item.received++;
             }
-            if (chunkCounts.get(key) == count) {
+            if (item.received == count) {
                 chunks.remove(key);
-                chunkCounts.remove(key);
-                int total = 0;
-                for (byte[] part : parts) total += part.length;
-                byte[] whole = new byte[total];
+                byte[] whole = new byte[(int) item.bytes];
                 int off = 0;
-                for (byte[] part : parts) {
+                for (byte[] part : item.parts) {
                     System.arraycopy(part, 0, whole, off, part.length);
                     off += part.length;
                 }
@@ -151,7 +183,7 @@ final class NowPlaying {
                 Object top;
                 try {
                     top = BPlist.parse(data);
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     Log.d("bad plist: " + e);
                     return;
                 }

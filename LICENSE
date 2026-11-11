@@ -20,7 +20,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The packaged native programs are separate works under their own licences:
-shairport-sync (MIT-style, see its COPYING), NQPTP (GPL-2.0), OpenSSL (Apache-2.0),
-FFmpeg (LGPL-2.1+), libgcrypt and libgpg-error (LGPL-2.1+), libplist (LGPL-2.1+),
-libconfig (LGPL-2.1+), libsodium (ISC) and popt (MIT).
+The MIT License above covers this plugin's own code and build scripts. The
+packaged native programs (native/armeabi-v7a/libshairport.so and libnqptp.so) are
+separate works under their own licences: shairport-sync (MIT-style), NQPTP
+(GPL-2.0), OpenSSL (Apache-2.0), FFmpeg, libgcrypt, libgpg-error, libplist and
+libconfig (LGPL-2.1 or later), libsodium (ISC) and popt (MIT). Their notices,
+full licence texts, versions, source links and changes are in
+assets/licenses/THIRD-PARTY-NOTICES.txt and the other files in assets/licenses/.
+The exact sources and patches are attached to each GitHub release.

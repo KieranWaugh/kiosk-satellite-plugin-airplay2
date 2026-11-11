@@ -4,7 +4,7 @@ Makes a [Kiosk Satellite](https://github.com/jxlarrea/kiosk-satellite) device an
 
 Not affiliated with Apple. AirPlay is a trademark of Apple Inc.
 
-Needs Kiosk Satellite 2026.11.14 or newer, on Android 8.0 or newer on a device that runs 32-bit ARM code (`armeabi-v7a`).
+Needs Kiosk Satellite 2026.11.16 or newer, on Android 8.0 or newer on a device that runs 32-bit ARM code (`armeabi-v7a`).
 
 ## Installation
 
@@ -32,6 +32,8 @@ The speaker shows up in the AirPlay menu while it is the picked player. The plug
 
 Only one AirPlay 2 receiver can run on a device, so picking this player takes Kiosk Satellite's built-in AirPlay receiver offline.
 
+**The speaker has no password.** While it is the picked player, anyone on your network can play to it, as with most AirPlay speakers. Only pick it on a network you trust.
+
 ## How it works
 
 The plugin runs two open-source programs, built for Android, as separate processes:
@@ -40,7 +42,14 @@ The plugin runs two open-source programs, built for Android, as separate process
 - **[NQPTP](https://github.com/mikebrady/nqptp)** keeps the shared clock (PTP) that grouped AirPlay 2 speakers play to. PTP uses UDP ports 319 and 320.
 - **mDNS:** the speaker is advertised with Android's own NsdManager.
 
-The hard part is ports 319 and 320. Most Android kernels don't let apps open ports below 1024. Where they're blocked, a short root command adds `iptables` rules that redirect 319 and 320 to 10319 and 10320, and NQPTP runs as an ordinary app on those. PTP that NQPTP sends goes out from 319 and 320, so other speakers answer it as usual. Root is also used to give NQPTP real-time priority and to remove the rules when AirPlay stops. No root process keeps running.
+The hard part is ports 319 and 320. Most Android kernels don't let apps open ports below 1024. Where they're blocked, a short root command adds `iptables` rules that redirect 319 and 320 to 10319 and 10320, and NQPTP runs as an ordinary app on those. PTP that NQPTP sends goes out from 319 and 320, so other speakers answer it as usual. Root is also used to give NQPTP real-time priority and to remove the rules again. No root process keeps running.
+
+When the rules are removed:
+
+- **When AirPlay stops** (another player is picked, or the plugin is turned off, updated or removed), with Shizuku or su, whichever added them. Kiosk Satellite 2026.11.16 and newer keep the plugin's Shizuku access open while it stops, which is why the plugin needs that version.
+- **At the next start**, if they couldn't be removed then: for example Shizuku or su had stopped working, Kiosk Satellite or the plugin crashed, or the device lost power mid-session. A restart of the device also clears them.
+
+Rules left in place are harmless while nothing listens on 10319 and 10320: PTP sent to the device is simply dropped.
 
 Where the kernel can redirect IPv4 but not IPv6 (as on the Echo Show 5), shairport-sync accepts connections over IPv4 only. Otherwise an iPhone playing to the speaker alone could connect and send its timing over IPv6, and nothing would play.
 
@@ -92,7 +101,7 @@ Use `su` (Magisk) for a device that has to come back by itself after a power cut
 | Device | Image | Kiosk Satellite | Root | Result |
 | --- | --- | --- | --- | --- |
 | Echo Show 5 (2nd gen, `cronos`) | [Kiosk Satellite Edition of LineageOS](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite) 18.1 (Android 11), kernel 4.9 | 2026.11.14 | Magisk 31.1 (`su`) | Plays alone and grouped with a HomePod and an Echo Dot. Sync settles within about 2 ms |
-| Echo Show 5 (2nd gen) | same | 2026.11.14 | Shizuku 13.6 as root, started through `adb root` | Plays. Shizuku has to be started again after each reboot. The 30-second rule repair was fixed in 1.0.2 and not tested again since |
+| Echo Show 5 (2nd gen) | same | 2026.11.16 | Shizuku 13.6 as root, started through `adb root` | 1.1.0 plays. The rules are removed when AirPlay stops (another player picked, or the plugin turned off), and rules left by 1.0.x are tidied on the first start. Shizuku has to be started again after each reboot. The 30-second rule repair was fixed in 1.0.2 and not tested again since |
 | Echo Dot (2nd gen, `biscuit`) | [Echo Dot image](https://github.com/jxlarrea/lineageos-echo-kiosk-satellite/blob/main/docs/echo-dot.md), LineageOS 18.1 (Android 11), kernel 4.9 | 2026.11.14 | Magisk 31.1 (`su`) | Plays alone and grouped with a HomePod and an Echo Show. Sync settles within about 2 ms. Comes back by itself after a power cut. Uses about 14 MB of the Dot's memory |
 
 Neither kernel has `ip6tables` NAT, so on both the plugin listens on IPv4 only.
@@ -130,9 +139,12 @@ Neither kernel has `ip6tables` NAT, so on both the plugin listens on IPv4 only.
 
 ## Where data goes
 
-- **Nowhere outside your network.** While the plugin is the picked player, the speaker listens on your local network (TCP 7000, UDP 319/320 and the ports AirPlay negotiates) and is advertised there with Android's own mDNS. Audio and track info pass between shairport-sync and the plugin over pipes and the device's loopback address only.
-- **Files:** the settings, a random device ID and the shairport-sync config, in Kiosk Satellite's private storage.
+- **Nowhere outside your network.** While the plugin is the picked player, the speaker listens on your local network (TCP 7000, UDP 319/320 and the ports AirPlay negotiates) and is advertised there with Android's own mDNS. Audio and track info pass between shairport-sync and the plugin over pipes and the device's loopback address only. The service records shairport-sync hands the plugin carry a secret made for each start, so other apps on the device can't advertise services through it.
+- **Files:** the settings, a random device ID, the shairport-sync config and an empty marker file while the port redirect may be in place, in Kiosk Satellite's private storage.
 
 ## License
 
-The plugin and build scripts are [MIT](LICENSE). The SDK interfaces in `sdk/` are Apache-2.0. The packaged native programs are separate works under their own licences: shairport-sync (MIT-style), NQPTP (GPL-2.0), OpenSSL (Apache-2.0), FFmpeg, libgcrypt, libgpg-error, libplist and libconfig (LGPL-2.1 or later), libsodium (ISC) and popt (MIT). `native/build.sh` downloads each from its upstream and pins its version and checksum.
+The plugin and build scripts are [MIT](LICENSE). The SDK interfaces in `sdk/` are Apache-2.0. The packaged native programs are separate works under their own licences: shairport-sync (MIT-style), NQPTP (GPL-2.0), OpenSSL (Apache-2.0), FFmpeg, libgcrypt, libgpg-error, libplist and libconfig (LGPL-2.1 or later), libsodium (ISC) and popt (MIT).
+
+- **Notices and licence texts:** [`assets/licenses/`](assets/licenses/), which the plugin package carries too. [`THIRD-PARTY-NOTICES.txt`](assets/licenses/THIRD-PARTY-NOTICES.txt) lists each component's version, licence, upstream source, checksum and changes.
+- **Source:** each [release](https://github.com/KieranWaugh/kiosk-satellite-plugin-airplay2/releases) has the pinned upstream tarballs and `native-sources.tar.gz` (the build script, patches and added files) attached next to the plugin ZIP. `native/build.sh` downloads each tarball, checks its SHA-256, applies the patches in `native/` and builds both programs, so you can rebuild them or relink with modified libraries.

@@ -1,7 +1,9 @@
 /* dns_sd shim: sends each service to the plugin as one UDP datagram on
  * 127.0.0.1:$SPS_MDNS_PORT (default 5556):
- *   "REG <id> <port> <regtype> <name as hex> <TXT rdata as hex>"
- *   "DEL <id>"
+ *   "<token> REG <id> <port> <regtype> <name as hex> <TXT rdata as hex>"
+ *   "<token> DEL <id>"
+ * <token> is $SPS_MDNS_TOKEN (at most 64 characters, no spaces), a secret the plugin
+ * makes for each start, so other apps on the device can't add services through it.
  * Every registration is re-sent every 30 s, so a plugin that restarts, or a lost
  * datagram, catches up. The plugin treats repeats of the same content as no-ops. */
 #include "dns_sd.h"
@@ -31,6 +33,7 @@ static pthread_once_t once = PTHREAD_ONCE_INIT;
 static int sock = -1;
 static struct sockaddr_in dest;
 static int next_id = 1;
+static char token[65];
 
 static void hex(char *out, const uint8_t *in, size_t n) {
   static const char d[] = "0123456789abcdef";
@@ -46,9 +49,10 @@ static void send_service(struct _DNSServiceRef_t *s) { /* call with lock held */
   char msg[64 + sizeof name_hex + sizeof txt_hex + 64];
   hex(name_hex, (const uint8_t *)s->name, strlen(s->name));
   hex(txt_hex, s->txt, s->txt_len);
-  int n = snprintf(msg, sizeof msg, "REG %d %u %s %s %s", s->id, s->port, s->regtype, name_hex,
-                   s->txt_len ? txt_hex : "-");
-  sendto(sock, msg, n, 0, (struct sockaddr *)&dest, sizeof dest);
+  int n = snprintf(msg, sizeof msg, "%s REG %d %u %s %s %s", token, s->id, s->port, s->regtype,
+                   name_hex, s->txt_len ? txt_hex : "-");
+  if (n > 0 && (size_t)n < sizeof msg)
+    sendto(sock, msg, n, 0, (struct sockaddr *)&dest, sizeof dest);
 }
 
 static void *refresher(void *arg) {
@@ -71,6 +75,8 @@ static void setup(void) {
   dest.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   const char *p = getenv("SPS_MDNS_PORT");
   dest.sin_port = htons(p ? (uint16_t)atoi(p) : 5556);
+  const char *tok = getenv("SPS_MDNS_TOKEN");
+  snprintf(token, sizeof token, "%s", tok && *tok && !strchr(tok, ' ') ? tok : "-");
   pthread_t t;
   if (pthread_create(&t, NULL, refresher, NULL) == 0)
     pthread_detach(t);
@@ -126,9 +132,10 @@ void DNSServiceRefDeallocate(DNSServiceRef sdRef) {
   if (sdRef == NULL)
     return;
   pthread_mutex_lock(&lock);
-  char msg[32];
-  int n = snprintf(msg, sizeof msg, "DEL %d", sdRef->id);
-  sendto(sock, msg, n, 0, (struct sockaddr *)&dest, sizeof dest);
+  char msg[sizeof token + 32];
+  int n = snprintf(msg, sizeof msg, "%s DEL %d", token, sdRef->id);
+  if (n > 0 && (size_t)n < sizeof msg)
+    sendto(sock, msg, n, 0, (struct sockaddr *)&dest, sizeof dest);
   sdRef->in_use = 0;
   pthread_mutex_unlock(&lock);
 }

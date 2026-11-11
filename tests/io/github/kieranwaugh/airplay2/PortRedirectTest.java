@@ -92,6 +92,14 @@ public class PortRedirectTest {
         assert r.ok() && rules("ipt").isEmpty() : rules("ipt");
         assert sh(PortRedirect.removeScript(v4, v6)).ok() : "removing nothing is fine";
 
+        // A start after an earlier session left copies behind: replacing leaves exactly one of each.
+        Files.write(new File(work, "rules.ipt").toPath(), doubled);
+        r = sh(PortRedirect.replaceScript(v4, v6));
+        assert r.ok() && rules("ipt").equals(Arrays.asList(PortRedirect.rules())) : rules("ipt");
+        r = sh(PortRedirect.replaceScript(v4, v6));
+        assert r.ok() && rules("ipt").size() == 4 : rules("ipt");
+        assert sh(PortRedirect.removeScript(v4, v6)).ok() && rules("ipt").isEmpty();
+
         // No IPv4 NAT at all: the redirect fails, so the plugin can fall back.
         String broken = fake("ipt-missing", false);
         r = sh(PortRedirect.addScript(broken, v6));
@@ -155,7 +163,92 @@ public class PortRedirectTest {
         later.forget();
         assert later.find() == nowUp;
 
+        tidying();
         shizukuGap();
+    }
+
+    /** A shell whose commands all exit with the given code. */
+    static final class ExitShell implements Root.Shell {
+        final String name;
+        final int exit;
+        int calls;
+        ExitShell(String name, int exit) { this.name = name; this.exit = exit; }
+        @Override public String name() { return name; }
+        @Override public Root.Result run(String script, int timeoutMs) {
+            calls++;
+            return new Root.Result(script.equals("id -u") ? 0 : exit, script.equals("id -u") ? "0" : "exit " + exit);
+        }
+    }
+
+    /** runToTidy falls back to su when the way that worked (Shizuku) is gone, never the other way. */
+    private static void tidying() throws Exception {
+        PortRedirectTest.FakeShell gone = new FakeShell("Shizuku", true, "0");
+        ExitShell su = new ExitShell("su", 0);
+        Root root = new Root(Arrays.asList(gone, su));
+        assert root.find() == gone;
+        FakeShell closed = new FakeShell("Shizuku", false, "0");
+        root = new Root(Arrays.asList(closed, su));
+        assert root.runToTidy("x", 1000).ok() && su.calls == 1 : "Shizuku closed: su tidies up";
+
+        ExitShell shizuku = new ExitShell("Shizuku", 0);
+        su = new ExitShell("su", 0);
+        root = new Root(Arrays.asList(shizuku, su));
+        assert root.find() == shizuku;
+        assert root.runToTidy("x", 1000).ok() && su.calls == 0 : "Shizuku works: su isn't touched";
+
+        Root suOnly = new Root(Arrays.asList(new FakeShell("Shizuku", true, "2000"), su));
+        assert suOnly.find() == su;
+        int before = su.calls;
+        assert suOnly.runToTidy("x", 1000).ok() && su.calls == before + 1;
+
+        ExitShell bad = new ExitShell("su", 1);
+        Root none = new Root(Arrays.asList(new FakeShell("Shizuku", false, "0"), bad));
+        try {
+            none.runToTidy("x", 1000);
+            throw new AssertionError("tidied without root");
+        } catch (java.io.IOException expected) {
+            assert expected.getMessage().startsWith("su:") : expected;
+        }
+
+        // Nqptp: a redirect left by an earlier session is removed at the next start, and the marker goes.
+        File dir = new File(work, "nqptp-dir");
+        dir.mkdirs();
+        ExitShell rootShell = new ExitShell("su", 0);
+        Nqptp nqptp = new Nqptp(dir, "/nonexistent/libnqptp.so", new Root(Arrays.asList(rootShell)));
+        assert !nqptp.redirectMayRemain() && nqptp.tidyUp() && rootShell.calls == 0 : "nothing to tidy: no root used";
+        Files.write(new File(dir, "redirect-added").toPath(), new byte[0]);
+        assert nqptp.redirectMayRemain();
+        assert nqptp.tidyUp() && !nqptp.redirectMayRemain() && rootShell.calls == 1;
+        Files.write(new File(dir, "redirect-added").toPath(), new byte[0]);
+        Nqptp failing = new Nqptp(dir, "/nonexistent/libnqptp.so", new Root(Arrays.asList(new ExitShell("su", 1))));
+        assert !failing.tidyUp() && failing.redirectMayRemain() : "kept for a later try";
+        new File(dir, "redirect-added").delete();
+
+        // Upgrade from 1.0.x (device-id exists, no marker ever written): checked once, only where
+        // apps can't open 319/320 (on this machine they may be free, so either outcome is checked).
+        File devId = new File(dir, "device-id"), checked = new File(dir, "redirect-marker-used");
+        nqptp.noteUpgrade();
+        assert !nqptp.redirectMayRemain() && checked.exists() : "a fresh install assumes nothing";
+        checked.delete();
+        Files.write(devId.toPath(), new byte[] {'x'});
+        boolean free = Nqptp.checkPorts(319, 320).equals("free");
+        nqptp.noteUpgrade();
+        assert nqptp.redirectMayRemain() == !free && checked.exists() : "upgrade: free=" + free;
+        new File(dir, "redirect-added").delete();
+        nqptp.noteUpgrade();
+        assert !nqptp.redirectMayRemain() : "only once";
+        devId.delete();
+        checked.delete();
+
+        // close(): no start afterwards.
+        nqptp.close();
+        try {
+            nqptp.start();
+            throw new AssertionError("started after close");
+        } catch (java.io.IOException expected) {
+            assert expected.getMessage().equals("stopping") : expected;
+        }
+        dir.delete();
     }
 
     /** Kiosk Satellite refuses a Shizuku command within 250 ms of the last; back-to-back runs must wait. */

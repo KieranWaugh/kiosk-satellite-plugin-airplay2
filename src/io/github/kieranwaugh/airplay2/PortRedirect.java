@@ -51,16 +51,27 @@ final class PortRedirect {
 
     /** Removes every copy of every rule; always exits 0. */
     static String removeScript(String iptables, String ip6tables) {
+        return removeCommands(iptables, ip6tables) + "exit 0";
+    }
+
+    static String removeScript() { return removeScript(IPTABLES, IP6TABLES); }
+
+    /** Removes every copy an earlier session left, then adds one of each (as addScript). */
+    static String replaceScript(String iptables, String ip6tables) {
+        return removeCommands(iptables, ip6tables) + addScript(iptables, ip6tables);
+    }
+
+    static String replaceScript() { return replaceScript(IPTABLES, IP6TABLES); }
+
+    private static String removeCommands(String iptables, String ip6tables) {
         StringBuilder sb = new StringBuilder();
         for (String tool : new String[] {iptables, ip6tables}) {
             for (String rule : rules()) {
                 sb.append("while ").append(tool).append(" -w 5 -t nat -D ").append(rule).append(" 2>/dev/null; do :; done; ");
             }
         }
-        return sb.append("exit 0").toString();
+        return sb.toString();
     }
-
-    static String removeScript() { return removeScript(IPTABLES, IP6TABLES); }
 
     /** Exits 0 if all the IPv4 rules are in place. */
     static String checkScript(String iptables) {

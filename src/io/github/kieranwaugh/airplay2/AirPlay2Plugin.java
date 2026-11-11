@@ -19,6 +19,10 @@ import me.jxl.kiosk.plugins.PluginPlayer;
  * canceller hears it and Kiosk applies its media volume and the assistant's duck. The track goes
  * to Now Playing through the player's state (NowPlaying). The speaker is advertised with
  * Android's mDNS (MdnsBridge) only while it is the pick, so it only shows up where it can play.
+ *
+ * Kiosk Satellite's callbacks (configure, onEvent, onActivate, onDeactivate) only note what
+ * changed and wake the supervisor thread, which does the slow work (root commands can take
+ * seconds), so they never wait for a lock. stop() returns within about 2.5 s.
  */
 public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     static final String PLAYER_KEY = "airplay";
@@ -44,7 +48,15 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     private volatile boolean statistics;
     private String publishedName;
 
-    private String lastStatus;
+    private volatile String lastStatus;
+
+    // Noted by Kiosk Satellite's callbacks, handled by the supervisor.
+    private volatile boolean configChanged, shizukuChanged;
+    /** Whether to remove a redirect an earlier session left (supervisor thread only). */
+    private boolean tidyPending = true;
+
+    /** stop() returns within this, whatever the helpers are doing. */
+    static final long STOP_BUDGET_MS = 2500;
 
     @Override
     public void start(PluginHost host, Map<String, Object> settings) throws Exception {
@@ -59,6 +71,7 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
         nowPlaying.start();
         root = Root.forHost(host);
         nqptp = new Nqptp(dir, host.nativeLibraryPath("nqptp"), root);
+        nqptp.noteUpgrade(); // before deviceId() below writes device-id
         shairport = new Shairport(dir, host.nativeLibraryPath("shairport"), deviceId(), this::openAudio);
         shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics, nowPlaying.port());
         mdns = new MdnsBridge(context);
@@ -73,11 +86,8 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     public void configure(Map<String, Object> settings) throws Exception {
         readSettings(settings);
         publishPlayer();
-        if (shairport != null && shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics, nowPlaying.port())) {
-            Log.i("settings changed; restarting shairport-sync");
-            shairport.stop(); // the supervisor starts it again with the new config if the player is the pick
-            wake();
-        }
+        configChanged = true; // the supervisor rewrites the config and restarts shairport-sync if it changed
+        wake();
     }
 
     @Override
@@ -85,28 +95,52 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
 
     @Override
     public void onEvent(String event, Map<String, Object> payload) {
-        // Shizuku connected, disconnected or was granted: if timing isn't up, look for root again.
-        if ("shizuku.state".equals(event) && root != null && (nqptp == null || !nqptp.isRunning())) {
-            root.forget();
+        // Shizuku connected, disconnected or was granted: the supervisor looks for root again if
+        // timing isn't up. Only a flag here: the supervisor may hold the locks for a while.
+        if ("shizuku.state".equals(event)) {
+            shizukuChanged = true;
             wake();
         }
     }
 
     @Override
     public void stop() {
+        long deadline = System.currentTimeMillis() + STOP_BUDGET_MS;
         running = false;
         player = null;
+        // From here on nothing starts a helper, even a supervisor that is midway through a start.
+        if (shairport != null) shairport.close();
+        if (nqptp != null) nqptp.close();
         wake();
         if (supervisor != null) {
-            supervisor.interrupt();
-            try {
-                supervisor.join(3000); // let it finish a start before stopping everything
-            } catch (InterruptedException ignored) {
-            }
+            supervisor.interrupt(); // ends a wait for a root command
+            join(supervisor, Math.min(500, deadline - System.currentTimeMillis()));
         }
-        stopServing();
+        // The tidy-up (stop the helpers, withdraw the services, remove the redirect) gets the rest of
+        // the budget; if root is slow it finishes in the background.
+        Thread tidy = new Thread(this::stopServingQuietly, "airplay2-stop");
+        tidy.setDaemon(true);
+        tidy.start();
+        join(tidy, deadline - System.currentTimeMillis());
         if (nowPlaying != null) nowPlaying.stop();
         Log.setHost(null);
+    }
+
+    private static void join(Thread t, long ms) {
+        if (ms <= 0) return;
+        try {
+            t.join(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void stopServingQuietly() {
+        try {
+            stopServing();
+        } catch (Throwable e) { // plugins run inside Kiosk Satellite's process: nothing may escape a thread
+            Log.w("stopping the AirPlay receiver", e);
+        }
     }
 
     // ---- the player ------------------------------------------------------------------------
@@ -162,14 +196,47 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
     // ---- the helpers -------------------------------------------------------------------------
 
     private void supervise() {
+        try {
+            superviseLoop();
+        } catch (Throwable e) { // plugins run inside Kiosk Satellite's process: nothing may escape a thread
+            Log.w("the AirPlay supervisor stopped", e);
+            status("Stopped after an error: " + e, true);
+        }
+    }
+
+    private void superviseLoop() {
         int quickExits = 0;
         long startedAt = 0;
         long lastCheck = 0;
         while (running) {
+            if (shizukuChanged) {
+                shizukuChanged = false;
+                if (!nqptp.isRunning()) root.forget();
+                tidyPending = true;
+            }
+            if (configChanged) {
+                configChanged = false;
+                try {
+                    if (shairport.writeConfig(speakerName, offsetMs / 1000.0, statistics, nowPlaying.port()) && shairport.isRunning()) {
+                        Log.i("settings changed; restarting shairport-sync");
+                        shairport.stop(); // started again below with the new config if this is the pick
+                    }
+                } catch (Exception e) {
+                    status("Can't write the shairport-sync config: " + e.getMessage(), true);
+                }
+            }
             if (player == null) {
                 if (serving) {
                     stopServing();
                     status(idleStatus(), false);
+                }
+                if (tidyPending && running) {
+                    tidyPending = false;
+                    try {
+                        if (nqptp.redirectMayRemain()) nqptp.tidyUp();
+                    } catch (InterruptedException e) {
+                        continue; // stop()
+                    }
                 }
                 quickExits = 0;
                 startedAt = 0;
@@ -208,11 +275,13 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
                             if (!running || player == null) continue;
                         }
                     }
-                    shairport.start();
+                    if (!running || player == null) continue;
+                    shairport.start(mdns.port(), mdns.token());
                     startedAt = System.currentTimeMillis();
                 }
                 status("Running as \"" + speakerName + "\" (" + nqptp.describe() + ")", false);
             } catch (Exception e) {
+                if (!running) break;
                 status(e.getMessage() != null ? e.getMessage() : e.toString(), true);
                 sleep(10000);
                 continue;
@@ -223,8 +292,22 @@ public class AirPlay2Plugin implements KioskPlugin, PlayerListener {
 
     /** Stops shairport-sync, NQPTP and the mDNS records, in parallel where it helps. */
     private synchronized void stopServing() {
-        Thread a = new Thread(() -> { if (shairport != null) shairport.stop(); });
-        Thread b = new Thread(() -> { if (nqptp != null) nqptp.stop(); }); // removing the redirect needs root once more
+        Thread a = new Thread(() -> {
+            try {
+                if (shairport != null) shairport.stop();
+            } catch (Throwable e) {
+                Log.w("stopping shairport-sync", e);
+            }
+        }, "airplay2-stop-shairport");
+        Thread b = new Thread(() -> { // removing the redirect needs root once more
+            try {
+                if (nqptp != null) nqptp.stop();
+            } catch (Throwable e) {
+                Log.w("stopping NQPTP", e);
+            }
+        }, "airplay2-stop-nqptp");
+        a.setDaemon(true);
+        b.setDaemon(true);
         a.start();
         b.start();
         try {
