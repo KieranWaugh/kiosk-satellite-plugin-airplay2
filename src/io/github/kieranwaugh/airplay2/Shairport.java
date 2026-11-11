@@ -98,6 +98,11 @@ final class Shairport {
         pb.environment().put("HOME", dir.getPath());
         pb.directory(dir);
         process = pb.start();
+        if (closed) { // close() ran while this was starting: it couldn't see the process yet
+            process.destroyForcibly();
+            process = null;
+            throw new IOException("stopping");
+        }
         stdin = process.getOutputStream();
         Process p = process;
         bridge = new AudioBridge(p.getInputStream(), opener, this::send);

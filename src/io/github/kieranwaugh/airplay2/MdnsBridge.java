@@ -115,6 +115,7 @@ final class MdnsBridge {
     private void handle(String msg) {
         String[] f = msg.split(" ");
         synchronized (services) {
+            if (!running) return; // a message that arrived just before stop() withdrew everything
             if (f.length == 2 && f[0].equals("DEL")) {
                 Registration r = services.remove(f[1]);
                 if (r != null) unregister(r);
